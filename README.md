@@ -1,82 +1,166 @@
 # BeatMatch Backend
 
-Backend server for the BeatMatch music guessing game. Built with Node.js, Express, Socket.IO, and MongoDB.
+A real-time multiplayer music guessing game backend built with JavaScript/TypeScript, Socket.IO, and Express.
 
-## Frontend
+## Features
 
-The frontend application is hosted at [https://beatmatch-delta.vercel.app](https://beatmatch-delta.vercel.app)
+- Real-time multiplayer game rooms
+- Player session management
+- Game state synchronization
+- Score tracking with time bonuses
+- Player streaks
+- Automatic cleanup of inactive sessions
+- Type-safe Socket.IO events (TypeScript version)
+- Comprehensive error handling and logging
 
-## Setup
+## Prerequisites
 
-1. Install dependencies:
+- Node.js >= 18.0.0
+- npm
+
+## Installation
+
+1. Clone the repository:
+```bash
+git clone <repository-url>
+cd beatmatch-bend-backend
+```
+
+2. Install dependencies:
 ```bash
 npm install
 ```
 
-2. Create a `.env` file in the root directory with the following variables:
+3. Create a `.env` file in the root directory:
+```env
+PORT=3001
+NODE_ENV=development
+FRONTEND_URL=http://localhost:3000
 ```
-PORT=8000
-MONGODB_URI=your_mongodb_uri
-FRONTEND_URL=https://beatmatch-delta.vercel.app
-```
-
-3. Run the development server:
-```bash
-npm run dev
-```
-
-## Deployment on Render.com
-
-1. Create a new Web Service on Render.com
-2. Connect your GitHub repository
-3. Use the following settings:
-   - Environment: Node
-   - Build Command: `npm install`
-   - Start Command: `npm start`
-4. Add the following environment variables:
-   - `MONGODB_URI`: Your MongoDB connection string
-   - `FRONTEND_URL`: https://beatmatch-delta.vercel.app
-   - `NODE_ENV`: production
-
-The server will automatically build and deploy when you push changes to your repository.
-
-## Features
-
-- Real-time multiplayer game sessions using Socket.IO
-- Music guessing gameplay
-- Player score tracking and leaderboards
-- Real-time game state synchronization
-- Cross-origin resource sharing (CORS) enabled for Vercel frontend
-
-## API Endpoints
-
-- `GET /health`: Health check endpoint
-- `GET /api/games`: List active games
-- `POST /api/games`: Create new game
-- `GET /api/games/:id`: Get game details
-
-## WebSocket Events
-
-### Client to Server
-- `join-game`: Join an existing game room
-- `submit-answer`: Submit an answer for the current round
-- `start-game`: Start the game (host only)
-
-### Server to Client
-- `player-joined`: New player joined the game
-- `answer-submitted`: Player submitted an answer
-- `game-started`: Game has started
-- `player-left`: Player left the game
-- `error`: Error message
 
 ## Development
 
-- `npm run dev`: Start development server with hot reload
-- `npm start`: Start production server
+The project supports both JavaScript and TypeScript development environments.
 
-## Tech Stack
+### JavaScript Development (Production Version)
+```bash
+npm run dev
+# or
+npm run dev:js
+```
 
-- Node.js
-- Express
-- Socket.IO
-- MongoDB with Mongoose 
+### TypeScript Development (Type-Safe Version)
+```bash
+npm run dev:ts
+```
+
+The server will be running at `http://localhost:3001`.
+
+## Testing
+
+### Unit Tests
+```bash
+npm test
+```
+
+### Integration Tests
+```bash
+# Test game functionality
+npm run test:js
+
+# Test multiplayer features
+npm run test:multi
+
+# Test connection handling
+npm run test:connection
+```
+
+## Project Structure
+
+```
+├── server.js                # Main JavaScript server file (Production)
+├── quick-game-test.js       # Game testing utility
+├── test-multiplayer.js      # Multiplayer testing utility
+├── test-connection.js       # Connection testing utility
+├── src/                     # TypeScript source files
+│   ├── index.ts            # TypeScript server implementation
+│   ├── types.ts            # Type definitions
+│   ├── services/
+│   │   └── GameManager.ts  # Game logic and state management
+│   └── utils/
+│       ├── logger.ts       # Winston logger configuration
+│       └── songUtils.ts    # Song-related utilities
+```
+
+## Deployment
+
+The project is configured for deployment on Render.com using the JavaScript version.
+
+1. Make sure the following environment variables are set:
+   - `PORT`: Server port (default: 3001)
+   - `NODE_ENV`: Set to 'production' for deployment
+   - `FRONTEND_URL`: Your frontend application URL
+
+2. The `Procfile` and `server.js` are used for production deployment.
+
+## API Endpoints
+
+### POST /api/games
+Creates a new game room.
+
+Request body:
+```json
+{
+  "roomId": "string",
+  "hostName": "string"
+}
+```
+
+Response:
+```json
+{
+  "roomId": "string",
+  "hostId": "string"
+}
+```
+
+## Socket.IO Events
+
+### Client to Server
+- `join-game`: Join a game room
+- `start-game`: Start the game (host only)
+- `submit-answer`: Submit an answer for the current round
+- `leave-game`: Leave the current game
+
+### Server to Client
+- `player-joined`: New player joined the room
+- `game-started`: Game has started
+- `answer-submitted`: Player submitted an answer
+- `round-ended`: Current round has ended
+- `game-ended`: Game has finished
+- `error`: Error occurred
+
+## Game Flow
+
+1. Host creates a game room via REST API
+2. Players join the room using Socket.IO
+3. Host starts the game when ready
+4. Each round:
+   - Server sends song question
+   - Players submit answers
+   - Scores are calculated
+   - Next round starts
+5. Game ends after final round
+6. Winner is announced
+7. Room is cleaned up
+
+## Error Handling
+
+- Comprehensive error handling for all API endpoints
+- Socket.IO error events for client notification
+- Winston logger for error tracking
+- Automatic cleanup of inactive sessions
+
+## License
+
+MIT 

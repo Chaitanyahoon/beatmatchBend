@@ -25,12 +25,14 @@ const httpServer = createServer(app);
 
 // Get the frontend URL from environment variable or use default
 const FRONTEND_URL = process.env.FRONTEND_URL || 'https://beatmatch-delta.vercel.app';
+const PORT = process.env.PORT || 3001;
 console.log('Frontend URL:', FRONTEND_URL);
+console.log('Server Port:', PORT);
 
 // Socket.IO Setup with CORS
 const io = new Server(httpServer, {
   cors: {
-    origin: '*', // More permissive for testing
+    origin: FRONTEND_URL,
     methods: ['GET', 'POST', 'OPTIONS'],
     credentials: true,
     allowedHeaders: ['Content-Type', 'Authorization']
@@ -48,7 +50,7 @@ const io = new Server(httpServer, {
 
 // Middleware
 app.use(cors({
-  origin: '*', // More permissive for testing
+  origin: FRONTEND_URL,
   methods: ['GET', 'POST', 'OPTIONS'],
   credentials: true,
   optionsSuccessStatus: 200,
@@ -59,11 +61,23 @@ app.use(express.json());
 
 // Add headers to allow WebSocket upgrade
 app.use((req, res, next) => {
-  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Origin', FRONTEND_URL);
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   res.setHeader('Access-Control-Allow-Credentials', 'true');
   next();
+});
+
+// Health check endpoint
+app.get('/health', (req, res) => {
+  res.status(200).json({ 
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+    environment: process.env.NODE_ENV,
+    frontendUrl: FRONTEND_URL,
+    activeGames: games.size,
+    connectedClients: io.engine.clientsCount
+  });
 });
 
 // Routes
@@ -104,6 +118,12 @@ app.get('/', (req, res) => {
             margin: 10px 0;
             font-family: monospace;
           }
+          .stats {
+            margin: 20px 0;
+            padding: 15px;
+            background: #e3f2fd;
+            border-radius: 4px;
+          }
         </style>
       </head>
       <body>
@@ -112,6 +132,13 @@ app.get('/', (req, res) => {
           <div class="status">
             ✅ Server is running!
           </div>
+          <div class="stats">
+            <h3>Server Stats:</h3>
+            <p>Active Games: ${games.size}</p>
+            <p>Connected Clients: ${io.engine.clientsCount}</p>
+            <p>Environment: ${process.env.NODE_ENV || 'development'}</p>
+            <p>Frontend URL: ${FRONTEND_URL}</p>
+          </div>
           <div class="endpoints">
             <h3>Available Endpoints:</h3>
             <div class="endpoint">GET /health - Check server health</div>
@@ -119,31 +146,38 @@ app.get('/', (req, res) => {
             <div class="endpoint">POST /api/games - Create a new game</div>
             <div class="endpoint">GET /api/games/:roomId - Get game details</div>
           </div>
-          <p>Frontend URL: ${FRONTEND_URL}</p>
-          <p>Environment: ${process.env.NODE_ENV || 'development'}</p>
         </div>
       </body>
     </html>
   `);
 });
 
-app.get('/health', (req, res) => {
-  res.status(200).json({ 
-    status: 'ok',
-    environment: process.env.NODE_ENV,
-    frontendUrl: FRONTEND_URL
-  });
-});
-
+// Game routes
 app.get('/api/games', (req, res) => {
-  const activeGames = Array.from(games.values())
-    .filter(game => game.isActive);
-  res.json(activeGames);
+  try {
+    const activeGames = Array.from(games.values())
+      .filter(game => game.isActive)
+      .map(game => ({
+        roomId: game.roomId,
+        playerCount: game.players.length,
+        currentRound: game.currentRound,
+        totalRounds: game.totalRounds,
+        startedAt: game.startedAt
+      }));
+    res.json(activeGames);
+  } catch (error) {
+    console.error('Error fetching games:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
 });
 
 app.post('/api/games', (req, res) => {
   try {
     const { roomId, hostName } = req.body;
+    if (!roomId || !hostName) {
+      return res.status(400).json({ error: 'Missing required fields' });
+    }
+
     if (games.has(roomId)) {
       return res.status(400).json({ error: 'Room ID already exists' });
     }
@@ -169,39 +203,32 @@ app.post('/api/games', (req, res) => {
     games.set(roomId, game);
     res.status(201).json(game);
   } catch (error) {
+    console.error('Error creating game:', error);
     res.status(500).json({ error: 'Failed to create game' });
   }
 });
 
 app.get('/api/games/:roomId', (req, res) => {
-  const game = games.get(req.params.roomId);
-  if (!game || !game.isActive) {
-    return res.status(404).json({ error: 'Game not found' });
+  try {
+    const game = games.get(req.params.roomId);
+    if (!game || !game.isActive) {
+      return res.status(404).json({ error: 'Game not found' });
+    }
+    res.json(game);
+  } catch (error) {
+    console.error('Error fetching game:', error);
+    res.status(500).json({ error: 'Internal server error' });
   }
-  res.json(game);
 });
 
 // Socket.IO connection handling
 io.on('connection', (socket) => {
   console.log('🟢 New client connected:', socket.id);
   console.log(`📊 Total connected clients: ${io.engine.clientsCount}`);
-  console.log('🔌 Transport used:', socket.conn.transport.name);
 
   // Handle transport change
   socket.conn.on('upgrade', (transport) => {
     console.log('🔄 Connection upgraded to:', transport.name);
-  });
-
-  // Handle ping
-  socket.conn.on('ping', () => {
-    console.log('📍 Ping received from client:', socket.id);
-  });
-
-  // Handle packet
-  socket.conn.on('packet', (packet) => {
-    if (packet.type === 'error') {
-      console.error('❌ Socket packet error:', packet.data);
-    }
   });
 
   // Handle error
@@ -219,11 +246,24 @@ io.on('connection', (socket) => {
           const player = game.players[playerIndex];
           console.log(`👋 Player left game - Room: ${roomId}, Player: ${player.name}`);
           game.players = game.players.filter(p => p.id !== socket.id);
+          
           if (game.players.length === 0) {
             game.isActive = false;
+            game.endedAt = new Date();
             console.log(`🏁 Game ended - Room: ${roomId} (no players remaining)`);
+            // Clean up inactive games after 1 hour
+            setTimeout(() => {
+              if (!game.isActive) {
+                games.delete(roomId);
+                console.log(`🧹 Cleaned up inactive game: ${roomId}`);
+              }
+            }, 3600000);
           }
-          io.to(roomId).emit('player-left', { players: game.players });
+          
+          io.to(roomId).emit('player-left', { 
+            players: game.players,
+            gameStatus: game.isActive ? 'active' : 'ended'
+          });
           break;
         }
       }
@@ -234,11 +274,16 @@ io.on('connection', (socket) => {
 
   socket.on('join-game', async (data) => {
     try {
-      console.log(`🎮 Player joining game - Room: ${data.roomId}, Player: ${data.playerName}, SocketID: ${socket.id}`);
+      console.log(`🎮 Player joining game - Room: ${data.roomId}, Player: ${data.playerName}`);
       const game = games.get(data.roomId);
+      
       if (!game || !game.isActive) {
-        console.log(`❌ Failed join attempt - Room ${data.roomId} not found or inactive`);
-        socket.emit('error', { message: 'Game not found' });
+        socket.emit('error', { message: 'Game not found or inactive' });
+        return;
+      }
+
+      if (game.players.length >= 4) {
+        socket.emit('error', { message: 'Game room is full' });
         return;
       }
 
@@ -251,237 +296,139 @@ io.on('connection', (socket) => {
         lastAnswerTime: null
       });
 
-      socket.join(data.roomId);
-      console.log(`✅ Player joined successfully - Room: ${data.roomId}, Players: ${game.players.length}`);
-      io.to(data.roomId).emit('player-joined', { players: game.players });
+      await socket.join(data.roomId);
+      io.to(data.roomId).emit('player-joined', {
+        players: game.players,
+        gameState: {
+          currentRound: game.currentRound,
+          totalRounds: game.totalRounds,
+          startedAt: game.startedAt
+        }
+      });
     } catch (error) {
-      console.error('❌ Join game error:', error);
+      console.error('❌ Error joining game:', error);
       socket.emit('error', { message: 'Failed to join game' });
     }
   });
 
-  socket.on('submit-answer', async (data) => {
+  socket.on('start-game', (data) => {
     try {
-      console.log(`📝 Answer submitted - Room: ${data.roomId}, Player: ${socket.id}`);
       const game = games.get(data.roomId);
       if (!game || !game.isActive) {
-        console.log(`❌ Answer submission failed - Game not found or inactive`);
+        socket.emit('error', { message: 'Game not found' });
+        return;
+      }
+
+      if (game.players.length < 2) {
+        socket.emit('error', { message: 'Not enough players to start' });
+        return;
+      }
+
+      game.currentRound = 1;
+      game.roundStartTime = Date.now();
+      
+      io.to(data.roomId).emit('game-started', {
+        currentRound: game.currentRound,
+        players: game.players,
+        startTime: game.roundStartTime
+      });
+    } catch (error) {
+      console.error('❌ Error starting game:', error);
+      socket.emit('error', { message: 'Failed to start game' });
+    }
+  });
+
+  socket.on('submit-answer', (data) => {
+    try {
+      const game = games.get(data.roomId);
+      if (!game || !game.isActive) {
+        socket.emit('error', { message: 'Game not found' });
         return;
       }
 
       const player = game.players.find(p => p.id === socket.id);
-      if (player) {
-        const now = Date.now();
-        let pointsEarned = 0;
-
-        if (data.answer.isCorrect) {
-          // Base points
-          pointsEarned += GAME_CONFIG.SCORING.BASE_POINTS;
-
-          // Time bonus (faster answers get more points)
-          if (game.roundStartTime) {
-            const timeElapsed = now - game.roundStartTime;
-            const timeBonus = Math.max(0, GAME_CONFIG.SCORING.TIME_BONUS_MAX - Math.floor(timeElapsed / 1000));
-            pointsEarned += timeBonus;
-          }
-
-          // Streak bonus
-          player.streak++;
-          if (player.streak > 1) {
-            pointsEarned += GAME_CONFIG.SCORING.STREAK_BONUS * (player.streak - 1);
-          }
-
-          // Round completion bonus
-          if (game.currentRound === game.totalRounds) {
-            pointsEarned += GAME_CONFIG.SCORING.ROUND_COMPLETION_BONUS;
-          }
-
-          player.correctAnswers++;
-        } else {
-          player.streak = 0;
-        }
-
-        player.score += pointsEarned;
-        player.lastAnswerTime = now;
-
-        console.log(`✅ Score updated - Player: ${player.name}, Points Earned: ${pointsEarned}, New Score: ${player.score}`);
+      if (!player) {
+        socket.emit('error', { message: 'Player not found' });
+        return;
       }
 
-      io.to(data.roomId).emit('answer-submitted', {
-        playerId: socket.id,
-        players: game.players,
-        currentRound: game.currentRound,
-        totalRounds: game.totalRounds
-      });
+      const answerTime = Date.now() - game.roundStartTime;
+      const isCorrect = data.answer.isCorrect;
 
-      // Check if this was the last round
-      if (game.currentRound === game.totalRounds) {
-        game.isActive = false;
-        game.endedAt = new Date();
-        io.to(data.roomId).emit('game-ended', {
-          players: game.players.sort((a, b) => b.score - a.score), // Sort by score
-          winner: game.players.reduce((prev, current) => (prev.score > current.score) ? prev : current)
+      // Update player score
+      if (isCorrect) {
+        const timeBonus = Math.max(0, GAME_CONFIG.SCORING.TIME_BONUS_MAX - Math.floor(answerTime / 1000));
+        const streakBonus = player.streak * GAME_CONFIG.SCORING.STREAK_BONUS;
+        player.score += GAME_CONFIG.SCORING.BASE_POINTS + timeBonus + streakBonus;
+        player.correctAnswers++;
+        player.streak++;
+      } else {
+        player.streak = 0;
+      }
+
+      player.lastAnswerTime = Date.now();
+
+      // Check if all players have answered
+      const allAnswered = game.players.every(p => p.lastAnswerTime > game.roundStartTime);
+      
+      if (allAnswered) {
+        game.currentRound++;
+        game.roundStartTime = Date.now();
+        
+        if (game.currentRound > game.totalRounds) {
+          const winner = game.players.reduce((prev, current) => 
+            (prev.score > current.score) ? prev : current
+          );
+          
+          game.isActive = false;
+          game.endedAt = new Date();
+          
+          io.to(data.roomId).emit('game-ended', {
+            winner,
+            players: game.players,
+            finalScores: game.players.map(p => ({
+              name: p.name,
+              score: p.score,
+              correctAnswers: p.correctAnswers
+            }))
+          });
+          
+          // Clean up the game after 1 hour
+          setTimeout(() => {
+            games.delete(data.roomId);
+            console.log(`🧹 Cleaned up finished game: ${data.roomId}`);
+          }, 3600000);
+        } else {
+          io.to(data.roomId).emit('round-ended', {
+            nextRound: game.currentRound,
+            players: game.players,
+            roundStartTime: game.roundStartTime
+          });
+        }
+      } else {
+        io.to(data.roomId).emit('answer-submitted', {
+          playerId: socket.id,
+          playerName: player.name,
+          isCorrect,
+          score: player.score
         });
       }
     } catch (error) {
-      console.error('❌ Submit answer error:', error);
+      console.error('❌ Error submitting answer:', error);
       socket.emit('error', { message: 'Failed to submit answer' });
     }
   });
-
-  socket.on('start-game', async (data) => {
-    try {
-      console.log(`🎲 Starting game - Room: ${data.roomId}`);
-      const game = games.get(data.roomId);
-      if (!game || !game.isActive) {
-        console.log(`❌ Start game failed - Game not found or inactive`);
-        return;
-      }
-
-      game.currentRound++;
-      game.roundStartTime = Date.now();
-
-      if (game.currentRound > game.totalRounds) {
-        game.isActive = false;
-        game.endedAt = new Date();
-        io.to(data.roomId).emit('game-ended', {
-          players: game.players.sort((a, b) => b.score - a.score), // Sort by score
-          winner: game.players.reduce((prev, current) => (prev.score > current.score) ? prev : current)
-        });
-        return;
-      }
-
-      console.log(`✅ Game started successfully - Room: ${data.roomId}, Round: ${game.currentRound}/${game.totalRounds}`);
-      io.to(data.roomId).emit('game-started', { 
-        currentRound: game.currentRound,
-        totalRounds: game.totalRounds
-      });
-    } catch (error) {
-      console.error('❌ Start game error:', error);
-      socket.emit('error', { message: 'Failed to start game' });
-    }
-  });
-});
-
-// Production-specific configurations
-if (process.env.NODE_ENV === 'production') {
-  // Enable trust proxy if behind a reverse proxy (like on Render.com)
-  app.set('trust proxy', 1);
-  
-  // Force secure WebSocket connections in production
-  app.use((req, res, next) => {
-    if (req.headers['x-forwarded-proto'] !== 'https') {
-      // Remember original protocol
-      req.socket.encrypted = true;
-    }
-    next();
-  });
-}
-
-// Error handling for WebSocket upgrade
-httpServer.on('upgrade', (req, socket, head) => {
-  console.log('⚡ WebSocket upgrade requested');
-  socket.on('error', (error) => {
-    console.error('❌ WebSocket upgrade error:', error);
-  });
-});
-
-// Error handling for undefined routes
-app.use((req, res) => {
-  res.status(404).send(`
-    <!DOCTYPE html>
-    <html>
-      <head>
-        <title>404 - Not Found</title>
-        <style>
-          body {
-            font-family: Arial, sans-serif;
-            max-width: 800px;
-            margin: 40px auto;
-            padding: 20px;
-            background: #f5f5f5;
-            text-align: center;
-          }
-          .container {
-            background: white;
-            padding: 20px;
-            border-radius: 8px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-          }
-          h1 { color: #e74c3c; }
-          .back-link {
-            color: #3498db;
-            text-decoration: none;
-            margin-top: 20px;
-            display: inline-block;
-          }
-          .back-link:hover {
-            text-decoration: underline;
-          }
-        </style>
-      </head>
-      <body>
-        <div class="container">
-          <h1>404 - Page Not Found</h1>
-          <p>The requested URL ${req.url} was not found on this server.</p>
-          <a href="/" class="back-link">← Go back to home</a>
-        </div>
-      </body>
-    </html>
-  `);
 });
 
 // Error handling middleware
 app.use((err, req, res, next) => {
-  console.error('Server error:', err);
-  res.status(500).send(`
-    <!DOCTYPE html>
-    <html>
-      <head>
-        <title>500 - Server Error</title>
-        <style>
-          body {
-            font-family: Arial, sans-serif;
-            max-width: 800px;
-            margin: 40px auto;
-            padding: 20px;
-            background: #f5f5f5;
-            text-align: center;
-          }
-          .container {
-            background: white;
-            padding: 20px;
-            border-radius: 8px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-          }
-          h1 { color: #e74c3c; }
-          .back-link {
-            color: #3498db;
-            text-decoration: none;
-            margin-top: 20px;
-            display: inline-block;
-          }
-          .back-link:hover {
-            text-decoration: underline;
-          }
-        </style>
-      </head>
-      <body>
-        <div class="container">
-          <h1>500 - Server Error</h1>
-          <p>Something went wrong on our end. Please try again later.</p>
-          <a href="/" class="back-link">← Go back to home</a>
-        </div>
-      </body>
-    </html>
-  `);
+  console.error('❌ Server error:', err);
+  res.status(500).json({ error: 'Internal server error' });
 });
 
-// Start the server
-const PORT = process.env.PORT || 3000;
+// Start server
 httpServer.listen(PORT, () => {
-  console.log(`🎮 Server running on port ${PORT}`);
-  console.log(`🌐 Accepting connections from: ${FRONTEND_URL}`);
-  console.log(`🔧 Environment: ${process.env.NODE_ENV || 'development'}`);
-  console.log(`📡 WebSocket server enabled`);
+  console.log(`🚀 Server running on port ${PORT}`);
+  console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`🔗 Frontend URL: ${FRONTEND_URL}`);
 }); 

@@ -5,18 +5,44 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "nodemon server.js"
+    "dev:js": "nodemon server.js",
+    "dev:ts": "nodemon",
+    "dev": "nodemon server.js",
+    "build": "tsc",
+    "watch": "tsc -w",
+    "clean": "rimraf dist",
+    "lint": "eslint src --ext .ts",
+    "test": "jest",
+    "test:js": "node quick-game-test.js",
+    "test:multi": "node test-multiplayer.js",
+    "test:connection": "node test-connection.js"
   },
   "dependencies": {
     "cors": "^2.8.5",
-    "dotenv": "^16.3.1",
-    "express": "^4.18.2",
-    "socket.io": "^4.7.2"
+    "dotenv": "^16.5.0",
+    "express": "^4.21.2",
+    "socket.io": "^4.8.1",
+    "uuid": "^11.1.0",
+    "winston": "^3.17.0"
   },
   "devDependencies": {
-    "axios": "^1.9.0",
+    "@types/cors": "^2.8.18",
+    "@types/express": "^4.17.22",
+    "@types/jest": "^29.5.12",
+    "@types/node": "^20.17.57",
+    "@types/socket.io": "^3.0.1",
+    "@types/uuid": "^10.0.0",
+    "@types/winston": "^2.4.4",
+    "@typescript-eslint/eslint-plugin": "^7.0.1",
+    "@typescript-eslint/parser": "^7.0.1",
+    "eslint": "^8.56.0",
+    "jest": "^29.7.0",
     "nodemon": "^3.0.1",
-    "socket.io-client": "^4.8.1"
+    "rimraf": "^5.0.5",
+    "socket.io-client": "^4.8.1",
+    "ts-jest": "^29.1.2",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.8.3"
   },
   "engines": {
     "node": ">=18.0.0"
