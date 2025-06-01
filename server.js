@@ -30,30 +30,41 @@ console.log('Frontend URL:', FRONTEND_URL);
 // Socket.IO Setup with CORS
 const io = new Server(httpServer, {
   cors: {
-    origin: [FRONTEND_URL, 'https://beatmatch-delta.vercel.app'],
-    methods: ['GET', 'POST'],
-    credentials: true
+    origin: '*', // More permissive for testing
+    methods: ['GET', 'POST', 'OPTIONS'],
+    credentials: true,
+    allowedHeaders: ['Content-Type', 'Authorization']
   },
   allowEIO3: true,
   transports: ['websocket', 'polling'],
   pingTimeout: 60000,
   pingInterval: 25000,
   upgradeTimeout: 30000,
-  maxHttpBufferSize: 1e8
+  maxHttpBufferSize: 1e8,
+  path: '/socket.io/',
+  serveClient: false,
+  cookie: false
 });
 
 // Middleware
 app.use(cors({
-  origin: [FRONTEND_URL, 'https://beatmatch-delta.vercel.app'],
+  origin: '*', // More permissive for testing
   methods: ['GET', 'POST', 'OPTIONS'],
   credentials: true,
-  optionsSuccessStatus: 200
+  optionsSuccessStatus: 200,
+  allowedHeaders: ['Content-Type', 'Authorization']
 }));
 
 app.use(express.json());
 
-// Add OPTIONS handler for preflight requests
-app.options('*', cors());
+// Add headers to allow WebSocket upgrade
+app.use((req, res, next) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
+  next();
+});
 
 // Routes
 app.get('/', (req, res) => {
@@ -170,10 +181,56 @@ app.get('/api/games/:roomId', (req, res) => {
   res.json(game);
 });
 
-// Socket.IO handlers
+// Socket.IO connection handling
 io.on('connection', (socket) => {
   console.log('🟢 New client connected:', socket.id);
   console.log(`📊 Total connected clients: ${io.engine.clientsCount}`);
+  console.log('🔌 Transport used:', socket.conn.transport.name);
+
+  // Handle transport change
+  socket.conn.on('upgrade', (transport) => {
+    console.log('🔄 Connection upgraded to:', transport.name);
+  });
+
+  // Handle ping
+  socket.conn.on('ping', () => {
+    console.log('📍 Ping received from client:', socket.id);
+  });
+
+  // Handle packet
+  socket.conn.on('packet', (packet) => {
+    if (packet.type === 'error') {
+      console.error('❌ Socket packet error:', packet.data);
+    }
+  });
+
+  // Handle error
+  socket.on('error', (error) => {
+    console.error('❌ Socket error:', error);
+  });
+
+  // Handle disconnection
+  socket.on('disconnect', (reason) => {
+    console.log(`🔴 Client disconnected (${reason}):`, socket.id);
+    try {
+      for (const [roomId, game] of games.entries()) {
+        const playerIndex = game.players.findIndex(p => p.id === socket.id);
+        if (playerIndex !== -1) {
+          const player = game.players[playerIndex];
+          console.log(`👋 Player left game - Room: ${roomId}, Player: ${player.name}`);
+          game.players = game.players.filter(p => p.id !== socket.id);
+          if (game.players.length === 0) {
+            game.isActive = false;
+            console.log(`🏁 Game ended - Room: ${roomId} (no players remaining)`);
+          }
+          io.to(roomId).emit('player-left', { players: game.players });
+          break;
+        }
+      }
+    } catch (error) {
+      console.error('❌ Disconnect handling error:', error);
+    }
+  });
 
   socket.on('join-game', async (data) => {
     try {
@@ -304,27 +361,28 @@ io.on('connection', (socket) => {
       socket.emit('error', { message: 'Failed to start game' });
     }
   });
+});
 
-  socket.on('disconnect', async () => {
-    console.log(`🔴 Client disconnected: ${socket.id}`);
-    try {
-      for (const [roomId, game] of games.entries()) {
-        const playerIndex = game.players.findIndex(p => p.id === socket.id);
-        if (playerIndex !== -1) {
-          const player = game.players[playerIndex];
-          console.log(`👋 Player left game - Room: ${roomId}, Player: ${player.name}`);
-          game.players = game.players.filter(p => p.id !== socket.id);
-          if (game.players.length === 0) {
-            game.isActive = false;
-            console.log(`🏁 Game ended - Room: ${roomId} (no players remaining)`);
-          }
-          io.to(roomId).emit('player-left', { players: game.players });
-          break;
-        }
-      }
-    } catch (error) {
-      console.error('❌ Disconnect handling error:', error);
+// Production-specific configurations
+if (process.env.NODE_ENV === 'production') {
+  // Enable trust proxy if behind a reverse proxy (like on Render.com)
+  app.set('trust proxy', 1);
+  
+  // Force secure WebSocket connections in production
+  app.use((req, res, next) => {
+    if (req.headers['x-forwarded-proto'] !== 'https') {
+      // Remember original protocol
+      req.socket.encrypted = true;
     }
+    next();
+  });
+}
+
+// Error handling for WebSocket upgrade
+httpServer.on('upgrade', (req, socket, head) => {
+  console.log('⚡ WebSocket upgrade requested');
+  socket.on('error', (error) => {
+    console.error('❌ WebSocket upgrade error:', error);
   });
 });
 
@@ -425,4 +483,5 @@ httpServer.listen(PORT, () => {
   console.log(`🎮 Server running on port ${PORT}`);
   console.log(`🌐 Accepting connections from: ${FRONTEND_URL}`);
   console.log(`🔧 Environment: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`📡 WebSocket server enabled`);
 }); 
