@@ -16,116 +16,161 @@ const io = socketIo(server, {
 app.use(cors());
 app.use(express.json());
 
-// Game state storage
-const gameRooms = new Map();
-const playerSockets = new Map();
+// Spotify API configuration
+const SPOTIFY_CLIENT_ID = process.env.SPOTIFY_CLIENT_ID || 'your_spotify_client_id';
+const SPOTIFY_CLIENT_SECRET = process.env.SPOTIFY_CLIENT_SECRET || 'your_spotify_client_secret';
+let spotifyAccessToken = null;
+let tokenExpiresAt = 0;
 
-// Enhanced music questions with Deezer preview URLs
-const musicQuestions = [
-  {
-    id: "1",
-    audioUrl: "https://cdns-preview-d.dzcdn.net/stream/c-deda7fa9316d9e9e880d2c6207e92260-8.mp3", // Bohemian Rhapsody
-    options: ["Bohemian Rhapsody - Queen", "Imagine - John Lennon", "Hotel California - Eagles", "Stairway to Heaven - Led Zeppelin"],
-    correctAnswer: 0,
-    artist: "Queen",
-    title: "Bohemian Rhapsody"
-  },
-  {
-    id: "2",
-    audioUrl: "https://cdns-preview-e.dzcdn.net/stream/c-e77d23ebe0c6d2b5e6eb7b9e8a7e8c8e-8.mp3", // Sweet Child O' Mine
-    options: ["Sweet Child O' Mine - Guns N' Roses", "November Rain - Guns N' Roses", "Paradise City - Guns N' Roses", "Welcome to the Jungle - Guns N' Roses"],
-    correctAnswer: 0,
-    artist: "Guns N' Roses",
-    title: "Sweet Child O' Mine"
-  },
-  {
-    id: "3",
-    audioUrl: "https://cdns-preview-c.dzcdn.net/stream/c-c2ca2a1e8d7f9e8e880d2c6207e92260-8.mp3", // Billie Jean
-    options: ["Billie Jean - Michael Jackson", "Beat It - Michael Jackson", "Thriller - Michael Jackson", "Smooth Criminal - Michael Jackson"],
-    correctAnswer: 0,
-    artist: "Michael Jackson",
-    title: "Billie Jean"
-  },
-  {
-    id: "4",
-    audioUrl: "https://cdns-preview-a.dzcdn.net/stream/c-a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6-8.mp3", // Like a Rolling Stone
-    options: ["Like a Rolling Stone - Bob Dylan", "Blowin' in the Wind - Bob Dylan", "The Times They Are a-Changin' - Bob Dylan", "Mr. Tambourine Man - Bob Dylan"],
-    correctAnswer: 0,
-    artist: "Bob Dylan",
-    title: "Like a Rolling Stone"
-  },
-  {
-    id: "5",
-    audioUrl: "https://cdns-preview-b.dzcdn.net/stream/c-b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7-8.mp3", // Purple Haze
-    options: ["Purple Haze - Jimi Hendrix", "Hey Joe - Jimi Hendrix", "All Along the Watchtower - Jimi Hendrix", "Foxy Lady - Jimi Hendrix"],
-    correctAnswer: 0,
-    artist: "Jimi Hendrix",
-    title: "Purple Haze"
-  },
-  {
-    id: "6",
-    audioUrl: "https://cdns-preview-f.dzcdn.net/stream/c-f3g4h5i6j7k8l9m0n1o2p3q4r5s6t7u8-8.mp3", // Hey Jude
-    options: ["Yesterday - The Beatles", "Hey Jude - The Beatles", "Let It Be - The Beatles", "Come Together - The Beatles"],
-    correctAnswer: 1,
-    artist: "The Beatles",
-    title: "Hey Jude"
-  },
-  {
-    id: "7",
-    audioUrl: "https://cdns-preview-g.dzcdn.net/stream/c-g4h5i6j7k8l9m0n1o2p3q4r5s6t7u8v9-8.mp3", // Smells Like Teen Spirit
-    options: ["Smells Like Teen Spirit - Nirvana", "Come As You Are - Nirvana", "Lithium - Nirvana", "In Bloom - Nirvana"],
-    correctAnswer: 0,
-    artist: "Nirvana",
-    title: "Smells Like Teen Spirit"
-  },
-  {
-    id: "8",
-    audioUrl: "https://cdns-preview-h.dzcdn.net/stream/c-h5i6j7k8l9m0n1o2p3q4r5s6t7u8v9w0-8.mp3", // Dancing Queen
-    options: ["Dancing Queen - ABBA", "Mamma Mia - ABBA", "Fernando - ABBA", "Waterloo - ABBA"],
-    correctAnswer: 0,
-    artist: "ABBA",
-    title: "Dancing Queen"
+// Get Spotify access token using client credentials flow
+async function getSpotifyAccessToken() {
+  if (spotifyAccessToken && Date.now() < tokenExpiresAt) {
+    return spotifyAccessToken;
   }
-];
 
-// Deezer API integration (optional - for dynamic music fetching)
-const DEEZER_API_BASE = 'https://api.deezer.com';
-
-async function fetchRandomTracks() {
   try {
-    // Fetch popular tracks from different genres
-    const genres = [113, 116, 132, 152]; // Rock, Pop, Hip Hop, Electronic
-    const randomGenre = genres[Math.floor(Math.random() * genres.length)];
-    
-    const response = await axios.get(`${DEEZER_API_BASE}/genre/${randomGenre}/artists`);
-    const artists = response.data.data.slice(0, 10);
-    
-    const tracks = [];
-    for (const artist of artists) {
-      try {
-        const albumsResponse = await axios.get(`${DEEZER_API_BASE}/artist/${artist.id}/albums`);
-        const albums = albumsResponse.data.data.slice(0, 2);
-        
-        for (const album of albums) {
-          const tracksResponse = await axios.get(`${DEEZER_API_BASE}/album/${album.id}/tracks`);
-          const albumTracks = tracksResponse.data.data.slice(0, 3);
-          tracks.push(...albumTracks);
+    const response = await axios.post('https://accounts.spotify.com/api/token', 
+      'grant_type=client_credentials',
+      {
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'Authorization': `Basic ${Buffer.from(`${SPOTIFY_CLIENT_ID}:${SPOTIFY_CLIENT_SECRET}`).toString('base64')}`
         }
-      } catch (error) {
-        console.log(`Error fetching tracks for artist ${artist.id}`);
       }
-    }
+    );
+
+    spotifyAccessToken = response.data.access_token;
+    tokenExpiresAt = Date.now() + (response.data.expires_in * 1000) - 60000; // Refresh 1 minute early
     
-    return tracks.filter(track => track.preview).slice(0, 20);
+    console.log('✅ Spotify access token obtained');
+    return spotifyAccessToken;
   } catch (error) {
-    console.error('Error fetching tracks from Deezer:', error);
+    console.error('❌ Failed to get Spotify access token:', error.response?.data || error.message);
+    return null;
+  }
+}
+
+// Search for tracks on Spotify
+async function searchSpotifyTracks(query, limit = 50) {
+  try {
+    const token = await getSpotifyAccessToken();
+    if (!token) return [];
+
+    const response = await axios.get('https://api.spotify.com/v1/search', {
+      headers: {
+        'Authorization': `Bearer ${token}`
+      },
+      params: {
+        q: query,
+        type: 'track',
+        limit: limit,
+        market: 'US'
+      }
+    });
+
+    return response.data.tracks.items.filter(track => track.preview_url);
+  } catch (error) {
+    console.error('❌ Spotify search error:', error.response?.data || error.message);
     return [];
   }
 }
 
+// Generate random music questions using Spotify
+async function generateMusicQuestions() {
+  const genres = ['pop', 'rock', 'hip-hop', 'electronic', 'indie', 'alternative', 'classic rock', 'r&b'];
+  const years = ['2020..2024', '2015..2019', '2010..2014', '2000..2009', '1990..1999', '1980..1989'];
+  
+  const questions = [];
+  
+  for (let i = 0; i < 10; i++) {
+    try {
+      const randomGenre = genres[Math.floor(Math.random() * genres.length)];
+      const randomYear = years[Math.floor(Math.random() * years.length)];
+      const query = `genre:${randomGenre} year:${randomYear}`;
+      
+      const tracks = await searchSpotifyTracks(query, 50);
+      
+      if (tracks.length >= 4) {
+        const correctTrack = tracks[Math.floor(Math.random() * Math.min(tracks.length, 20))];
+        const wrongTracks = tracks
+          .filter(t => t.id !== correctTrack.id)
+          .sort(() => 0.5 - Math.random())
+          .slice(0, 3);
+        
+        if (wrongTracks.length === 3) {
+          const options = [correctTrack, ...wrongTracks]
+            .sort(() => 0.5 - Math.random())
+            .map(track => `${track.name} - ${track.artists[0].name}`);
+          
+          const correctAnswer = options.findIndex(option => 
+            option === `${correctTrack.name} - ${correctTrack.artists[0].name}`
+          );
+          
+          questions.push({
+            id: `spotify_${correctTrack.id}`,
+            audioUrl: correctTrack.preview_url,
+            options: options,
+            correctAnswer: correctAnswer,
+            artist: correctTrack.artists[0].name,
+            title: correctTrack.name,
+            genre: randomGenre,
+            year: correctTrack.album.release_date.split('-')[0]
+          });
+        }
+      }
+    } catch (error) {
+      console.error('Error generating question:', error.message);
+    }
+  }
+  
+  return questions;
+}
+
+// Fallback music questions (in case Spotify fails)
+const fallbackQuestions = [
+  {
+    id: "fallback_1",
+    audioUrl: "https://www.soundjay.com/misc/sounds/bell-ringing-05.wav", // Replace with actual preview URLs
+    options: ["Shape of You - Ed Sheeran", "Blinding Lights - The Weeknd", "Watermelon Sugar - Harry Styles", "Levitating - Dua Lipa"],
+    correctAnswer: 0,
+    artist: "Ed Sheeran",
+    title: "Shape of You"
+  },
+  {
+    id: "fallback_2",
+    audioUrl: "https://www.soundjay.com/misc/sounds/bell-ringing-05.wav",
+    options: ["Bad Guy - Billie Eilish", "Sunflower - Post Malone", "Old Town Road - Lil Nas X", "Someone You Loved - Lewis Capaldi"],
+    correctAnswer: 0,
+    artist: "Billie Eilish",
+    title: "Bad Guy"
+  }
+];
+
+// Game state storage
+const gameRooms = new Map();
+const playerSockets = new Map();
+let musicQuestions = [];
+
+// Initialize music questions on startup
+async function initializeMusicQuestions() {
+  console.log('🎵 Initializing music questions...');
+  try {
+    musicQuestions = await generateMusicQuestions();
+    if (musicQuestions.length === 0) {
+      console.log('⚠️ Using fallback questions');
+      musicQuestions = fallbackQuestions;
+    } else {
+      console.log(`✅ Generated ${musicQuestions.length} Spotify questions`);
+    }
+  } catch (error) {
+    console.error('❌ Failed to initialize music questions:', error.message);
+    musicQuestions = fallbackQuestions;
+  }
+}
+
 class GameRoom {
-  constructor(roomCode, hostId, hostName) {
-    this.roomCode = roomCode;
+  constructor(roomId, hostId, hostName) {
+    this.roomId = roomId;
     this.players = new Map();
     this.currentRound = 0;
     this.totalRounds = 5;
@@ -224,7 +269,7 @@ class GameRoom {
     }
     
     const questionIndex = Math.floor(Math.random() * availableQuestions.length);
-    this.currentQuestion = availableQuestions[questionIndex];
+    this.currentQuestion = availableQuestions[questionIndex] || musicQuestions[0];
     this.usedQuestions.add(this.currentQuestion.id);
     
     // Start timer
@@ -312,7 +357,7 @@ class GameRoom {
 
   getGameState() {
     return {
-      roomCode: this.roomCode,
+      roomId: this.roomId,
       players: this.getPlayersArray(),
       currentRound: this.currentRound,
       totalRounds: this.totalRounds,
@@ -327,18 +372,18 @@ class GameRoom {
 io.on('connection', (socket) => {
   console.log(`🎵 User connected: ${socket.id}`);
 
-  socket.on('join-room', ({ roomCode, playerName, isHost }) => {
+  socket.on('join-room', ({ roomId, playerName, isHost }) => {
     try {
-      let room = gameRooms.get(roomCode);
+      let room = gameRooms.get(roomId);
       
       if (!room) {
         if (!isHost) {
           socket.emit('room-error', { message: 'Room not found' });
           return;
         }
-        room = new GameRoom(roomCode, socket.id, playerName);
-        gameRooms.set(roomCode, room);
-        console.log(`🎮 Created new room: ${roomCode}`);
+        room = new GameRoom(roomId, socket.id, playerName);
+        gameRooms.set(roomId, room);
+        console.log(`🎮 Created new room: ${roomId}`);
       } else {
         if (room.gameStarted && !room.gameEnded) {
           socket.emit('room-error', { message: 'Game already in progress' });
@@ -347,12 +392,12 @@ io.on('connection', (socket) => {
         room.addPlayer(socket.id, playerName);
       }
 
-      socket.join(roomCode);
-      playerSockets.set(socket.id, { roomCode, playerName });
+      socket.join(roomId);
+      playerSockets.set(socket.id, { roomId, playerName });
       
-      io.to(roomCode).emit('room-updated', room.getGameState());
+      io.to(roomId).emit('room-updated', room.getGameState());
       
-      console.log(`👤 Player ${playerName} joined room ${roomCode}`);
+      console.log(`👤 Player ${playerName} joined room ${roomId}`);
       
     } catch (error) {
       console.error('Join room error:', error.message);
@@ -360,9 +405,9 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.on('start-game', async (roomCode) => {
+  socket.on('start-game', async (roomId) => {
     try {
-      const room = gameRooms.get(roomCode);
+      const room = gameRooms.get(roomId);
       if (!room) {
         socket.emit('room-error', { message: 'Room not found' });
         return;
@@ -375,19 +420,19 @@ io.on('connection', (socket) => {
       }
 
       if (await room.startGame()) {
-        io.to(roomCode).emit('game-started');
-        console.log(`🚀 Game started in room ${roomCode}`);
+        io.to(roomId).emit('game-started');
+        console.log(`🚀 Game started in room ${roomId}`);
         
         // Send first question after a short delay
         setTimeout(() => {
-          io.to(roomCode).emit('new-question', {
+          io.to(roomId).emit('new-question', {
             question: room.currentQuestion,
             round: room.currentRound
           });
           
           // Send timer updates
           const timerInterval = setInterval(() => {
-            io.to(roomCode).emit('timer-update', room.timeLeft);
+            io.to(roomId).emit('timer-update', room.timeLeft);
             if (room.timeLeft <= 0 || room.gameEnded) {
               clearInterval(timerInterval);
             }
@@ -402,19 +447,19 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.on('submit-answer', ({ roomCode, playerName, answer }) => {
+  socket.on('submit-answer', ({ roomId, playerName, answer }) => {
     try {
-      const room = gameRooms.get(roomCode);
+      const room = gameRooms.get(roomId);
       if (!room || room.gameEnded) return;
 
       if (room.submitAnswer(socket.id, answer)) {
-        console.log(`✅ Player ${playerName} submitted answer ${answer} in room ${roomCode}`);
+        console.log(`✅ Player ${playerName} submitted answer ${answer} in room ${roomId}`);
         
         // Check if round should end
         if (room.roundAnswers.size === room.players.size || room.timeLeft <= 0) {
           room.endRound();
           
-          io.to(roomCode).emit('round-results', {
+          io.to(roomId).emit('round-results', {
             correctAnswer: room.currentQuestion.correctAnswer,
             players: room.getPlayersArray(),
             question: room.currentQuestion
@@ -424,16 +469,16 @@ io.on('connection', (socket) => {
           if (room.currentRound > room.totalRounds) {
             setTimeout(() => {
               room.endGame();
-              io.to(roomCode).emit('game-ended', {
+              io.to(roomId).emit('game-ended', {
                 players: room.getPlayersArray()
               });
-              console.log(`🏁 Game ended in room ${roomCode}`);
+              console.log(`🏁 Game ended in room ${roomId}`);
             }, 3000);
           } else {
             // Send next question after delay
             setTimeout(() => {
               if (!room.gameEnded) {
-                io.to(roomCode).emit('new-question', {
+                io.to(roomId).emit('new-question', {
                   question: room.currentQuestion,
                   round: room.currentRound
                 });
@@ -448,8 +493,8 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.on('get-final-scores', (roomCode) => {
-    const room = gameRooms.get(roomCode);
+  socket.on('get-final-scores', (roomId) => {
+    const room = gameRooms.get(roomId);
     if (room) {
       socket.emit('final-scores', {
         players: room.getPlayersArray().sort((a, b) => b.score - a.score)
@@ -462,16 +507,16 @@ io.on('connection', (socket) => {
     
     const playerData = playerSockets.get(socket.id);
     if (playerData) {
-      const room = gameRooms.get(playerData.roomCode);
+      const room = gameRooms.get(playerData.roomId);
       if (room) {
         const shouldDeleteRoom = room.removePlayer(socket.id);
         
         if (shouldDeleteRoom) {
-          gameRooms.delete(playerData.roomCode);
-          console.log(`🗑️ Deleted empty room: ${playerData.roomCode}`);
+          gameRooms.delete(playerData.roomId);
+          console.log(`🗑️ Deleted empty room: ${playerData.roomId}`);
         } else {
-          io.to(playerData.roomCode).emit('room-updated', room.getGameState());
-          console.log(`👤 Player ${playerData.playerName} left room ${playerData.roomCode}`);
+          io.to(playerData.roomId).emit('room-updated', room.getGameState());
+          console.log(`👤 Player ${playerData.playerName} left room ${playerData.roomId}`);
         }
       }
       playerSockets.delete(socket.id);
@@ -484,6 +529,15 @@ io.on('connection', (socket) => {
   });
 });
 
+// Routes
+app.get('/', (req, res) => {
+  res.json({ 
+    message: 'BeatMatch Backend API',
+    status: 'OK',
+    timestamp: new Date().toISOString()
+  });
+});
+
 // Health check endpoint
 app.get('/health', (req, res) => {
   res.json({ 
@@ -491,13 +545,14 @@ app.get('/health', (req, res) => {
     service: 'BeatMatch Backend',
     rooms: gameRooms.size,
     players: playerSockets.size,
+    questions: musicQuestions.length,
     timestamp: new Date().toISOString()
   });
 });
 
 // Get room info endpoint
-app.get('/room/:roomCode', (req, res) => {
-  const room = gameRooms.get(req.params.roomCode);
+app.get('/room/:roomId', (req, res) => {
+  const room = gameRooms.get(req.params.roomId);
   if (room) {
     res.json(room.getGameState());
   } else {
@@ -505,13 +560,16 @@ app.get('/room/:roomCode', (req, res) => {
   }
 });
 
-// Get available music tracks endpoint
-app.get('/api/tracks', async (req, res) => {
+// Refresh music questions endpoint
+app.post('/api/refresh-questions', async (req, res) => {
   try {
-    const tracks = await fetchRandomTracks();
-    res.json({ tracks: tracks.slice(0, 10) });
+    await initializeMusicQuestions();
+    res.json({ 
+      message: 'Questions refreshed successfully',
+      count: musicQuestions.length 
+    });
   } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch tracks' });
+    res.status(500).json({ error: 'Failed to refresh questions' });
   }
 });
 
@@ -520,21 +578,36 @@ setInterval(() => {
   const now = Date.now();
   const ROOM_TIMEOUT = 30 * 60 * 1000; // 30 minutes
   
-  gameRooms.forEach((room, roomCode) => {
+  gameRooms.forEach((room, roomId) => {
     const roomAge = now - Math.min(...Array.from(room.players.values()).map(p => p.joinedAt));
     if (roomAge > ROOM_TIMEOUT && !room.gameStarted) {
-      gameRooms.delete(roomCode);
-      console.log(`🧹 Cleaned up inactive room: ${roomCode}`);
+      gameRooms.delete(roomId);
+      console.log(`🧹 Cleaned up inactive room: ${roomId}`);
     }
   });
 }, 30 * 60 * 1000);
 
+// Refresh music questions every 6 hours
+setInterval(async () => {
+  console.log('🔄 Refreshing music questions...');
+  await initializeMusicQuestions();
+}, 6 * 60 * 60 * 1000);
+
 const PORT = process.env.PORT || 3001;
-server.listen(PORT, () => {
-  console.log(`🎵 BeatMatch server running on port ${PORT}`);
-  console.log(`🌐 Health check: http://localhost:${PORT}/health`);
-  console.log(`🎮 Ready for multiplayer music battles!`);
-});
+
+// Initialize and start server
+async function startServer() {
+  await initializeMusicQuestions();
+  
+  server.listen(PORT, () => {
+    console.log(`🎵 BeatMatch server running on port ${PORT}`);
+    console.log(`🌐 Health check: http://localhost:${PORT}/health`);
+    console.log(`🎮 Ready for multiplayer music battles!`);
+    console.log(`🎧 Music questions loaded: ${musicQuestions.length}`);
+  });
+}
+
+startServer();
 
 // Graceful shutdown
 process.on('SIGTERM', () => {
