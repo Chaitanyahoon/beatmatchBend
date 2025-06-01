@@ -8,6 +8,17 @@ require('dotenv').config();
 // In-memory game storage
 const games = new Map();
 
+// Game Configuration
+const GAME_CONFIG = {
+  TOTAL_ROUNDS: 10,
+  SCORING: {
+    BASE_POINTS: 100,
+    TIME_BONUS_MAX: 50,
+    STREAK_BONUS: 25,
+    ROUND_COMPLETION_BONUS: 50
+  }
+};
+
 // Express App Setup
 const app = express();
 const httpServer = createServer(app);
@@ -62,13 +73,16 @@ app.post('/api/games', (req, res) => {
         id: 'host',
         name: hostName,
         score: 0,
-        correctAnswers: 0
+        correctAnswers: 0,
+        streak: 0,
+        lastAnswerTime: null
       }],
       currentRound: 0,
-      totalRounds: 5,
+      totalRounds: GAME_CONFIG.TOTAL_ROUNDS,
       isActive: true,
       startedAt: new Date(),
-      endedAt: null
+      endedAt: null,
+      roundStartTime: null
     };
 
     games.set(roomId, game);
@@ -88,12 +102,15 @@ app.get('/api/games/:roomId', (req, res) => {
 
 // Socket.IO handlers
 io.on('connection', (socket) => {
-  console.log('Client connected:', socket.id);
+  console.log('🟢 New client connected:', socket.id);
+  console.log(`📊 Total connected clients: ${io.engine.clientsCount}`);
 
   socket.on('join-game', async (data) => {
     try {
+      console.log(`🎮 Player joining game - Room: ${data.roomId}, Player: ${data.playerName}, SocketID: ${socket.id}`);
       const game = games.get(data.roomId);
       if (!game || !game.isActive) {
+        console.log(`❌ Failed join attempt - Room ${data.roomId} not found or inactive`);
         socket.emit('error', { message: 'Game not found' });
         return;
       }
@@ -102,65 +119,141 @@ io.on('connection', (socket) => {
         id: socket.id,
         name: data.playerName,
         score: 0,
-        correctAnswers: 0
+        correctAnswers: 0,
+        streak: 0,
+        lastAnswerTime: null
       });
 
       socket.join(data.roomId);
+      console.log(`✅ Player joined successfully - Room: ${data.roomId}, Players: ${game.players.length}`);
       io.to(data.roomId).emit('player-joined', { players: game.players });
     } catch (error) {
+      console.error('❌ Join game error:', error);
       socket.emit('error', { message: 'Failed to join game' });
     }
   });
 
   socket.on('submit-answer', async (data) => {
     try {
+      console.log(`📝 Answer submitted - Room: ${data.roomId}, Player: ${socket.id}`);
       const game = games.get(data.roomId);
-      if (!game || !game.isActive) return;
+      if (!game || !game.isActive) {
+        console.log(`❌ Answer submission failed - Game not found or inactive`);
+        return;
+      }
 
       const player = game.players.find(p => p.id === socket.id);
       if (player) {
-        player.score += data.answer.isCorrect ? 100 : 0;
-        player.correctAnswers += data.answer.isCorrect ? 1 : 0;
+        const now = Date.now();
+        let pointsEarned = 0;
+
+        if (data.answer.isCorrect) {
+          // Base points
+          pointsEarned += GAME_CONFIG.SCORING.BASE_POINTS;
+
+          // Time bonus (faster answers get more points)
+          if (game.roundStartTime) {
+            const timeElapsed = now - game.roundStartTime;
+            const timeBonus = Math.max(0, GAME_CONFIG.SCORING.TIME_BONUS_MAX - Math.floor(timeElapsed / 1000));
+            pointsEarned += timeBonus;
+          }
+
+          // Streak bonus
+          player.streak++;
+          if (player.streak > 1) {
+            pointsEarned += GAME_CONFIG.SCORING.STREAK_BONUS * (player.streak - 1);
+          }
+
+          // Round completion bonus
+          if (game.currentRound === game.totalRounds) {
+            pointsEarned += GAME_CONFIG.SCORING.ROUND_COMPLETION_BONUS;
+          }
+
+          player.correctAnswers++;
+        } else {
+          player.streak = 0;
+        }
+
+        player.score += pointsEarned;
+        player.lastAnswerTime = now;
+
+        console.log(`✅ Score updated - Player: ${player.name}, Points Earned: ${pointsEarned}, New Score: ${player.score}`);
       }
 
       io.to(data.roomId).emit('answer-submitted', {
         playerId: socket.id,
-        players: game.players
+        players: game.players,
+        currentRound: game.currentRound,
+        totalRounds: game.totalRounds
       });
+
+      // Check if this was the last round
+      if (game.currentRound === game.totalRounds) {
+        game.isActive = false;
+        game.endedAt = new Date();
+        io.to(data.roomId).emit('game-ended', {
+          players: game.players.sort((a, b) => b.score - a.score), // Sort by score
+          winner: game.players.reduce((prev, current) => (prev.score > current.score) ? prev : current)
+        });
+      }
     } catch (error) {
+      console.error('❌ Submit answer error:', error);
       socket.emit('error', { message: 'Failed to submit answer' });
     }
   });
 
   socket.on('start-game', async (data) => {
     try {
+      console.log(`🎲 Starting game - Room: ${data.roomId}`);
       const game = games.get(data.roomId);
-      if (!game || !game.isActive) return;
+      if (!game || !game.isActive) {
+        console.log(`❌ Start game failed - Game not found or inactive`);
+        return;
+      }
 
-      game.currentRound = 1;
-      io.to(data.roomId).emit('game-started', { currentRound: 1 });
+      game.currentRound++;
+      game.roundStartTime = Date.now();
+
+      if (game.currentRound > game.totalRounds) {
+        game.isActive = false;
+        game.endedAt = new Date();
+        io.to(data.roomId).emit('game-ended', {
+          players: game.players.sort((a, b) => b.score - a.score), // Sort by score
+          winner: game.players.reduce((prev, current) => (prev.score > current.score) ? prev : current)
+        });
+        return;
+      }
+
+      console.log(`✅ Game started successfully - Room: ${data.roomId}, Round: ${game.currentRound}/${game.totalRounds}`);
+      io.to(data.roomId).emit('game-started', { 
+        currentRound: game.currentRound,
+        totalRounds: game.totalRounds
+      });
     } catch (error) {
+      console.error('❌ Start game error:', error);
       socket.emit('error', { message: 'Failed to start game' });
     }
   });
 
   socket.on('disconnect', async () => {
-    console.log('Client disconnected:', socket.id);
+    console.log(`🔴 Client disconnected: ${socket.id}`);
     try {
-      // Find game where this socket is a player
       for (const [roomId, game] of games.entries()) {
         const playerIndex = game.players.findIndex(p => p.id === socket.id);
         if (playerIndex !== -1) {
+          const player = game.players[playerIndex];
+          console.log(`👋 Player left game - Room: ${roomId}, Player: ${player.name}`);
           game.players = game.players.filter(p => p.id !== socket.id);
           if (game.players.length === 0) {
             game.isActive = false;
+            console.log(`🏁 Game ended - Room: ${roomId} (no players remaining)`);
           }
           io.to(roomId).emit('player-left', { players: game.players });
           break;
         }
       }
     } catch (error) {
-      console.error('Error handling disconnection:', error);
+      console.error('❌ Disconnect handling error:', error);
     }
   });
 });
