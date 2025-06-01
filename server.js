@@ -57,7 +57,63 @@ app.options('*', cors());
 
 // Routes
 app.get('/', (req, res) => {
-  res.send('BeatMatch Game Server is running!');
+  res.send(`
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <title>BeatMatch Game Server</title>
+        <style>
+          body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 40px auto;
+            padding: 20px;
+            background: #f5f5f5;
+          }
+          .container {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+          }
+          h1 { color: #2c3e50; }
+          .status { 
+            padding: 10px;
+            border-radius: 4px;
+            background: #e8f5e9;
+            margin: 10px 0;
+          }
+          .endpoints {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 4px;
+            margin: 20px 0;
+          }
+          .endpoint {
+            margin: 10px 0;
+            font-family: monospace;
+          }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <h1>🎮 BeatMatch Game Server</h1>
+          <div class="status">
+            ✅ Server is running!
+          </div>
+          <div class="endpoints">
+            <h3>Available Endpoints:</h3>
+            <div class="endpoint">GET /health - Check server health</div>
+            <div class="endpoint">GET /api/games - List active games</div>
+            <div class="endpoint">POST /api/games - Create a new game</div>
+            <div class="endpoint">GET /api/games/:roomId - Get game details</div>
+          </div>
+          <p>Frontend URL: ${FRONTEND_URL}</p>
+          <p>Environment: ${process.env.NODE_ENV || 'development'}</p>
+        </div>
+      </body>
+    </html>
+  `);
 });
 
 app.get('/health', (req, res) => {
@@ -270,6 +326,97 @@ io.on('connection', (socket) => {
       console.error('❌ Disconnect handling error:', error);
     }
   });
+});
+
+// Error handling for undefined routes
+app.use((req, res) => {
+  res.status(404).send(`
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <title>404 - Not Found</title>
+        <style>
+          body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 40px auto;
+            padding: 20px;
+            background: #f5f5f5;
+            text-align: center;
+          }
+          .container {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+          }
+          h1 { color: #e74c3c; }
+          .back-link {
+            color: #3498db;
+            text-decoration: none;
+            margin-top: 20px;
+            display: inline-block;
+          }
+          .back-link:hover {
+            text-decoration: underline;
+          }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <h1>404 - Page Not Found</h1>
+          <p>The requested URL ${req.url} was not found on this server.</p>
+          <a href="/" class="back-link">← Go back to home</a>
+        </div>
+      </body>
+    </html>
+  `);
+});
+
+// Error handling middleware
+app.use((err, req, res, next) => {
+  console.error('Server error:', err);
+  res.status(500).send(`
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <title>500 - Server Error</title>
+        <style>
+          body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 40px auto;
+            padding: 20px;
+            background: #f5f5f5;
+            text-align: center;
+          }
+          .container {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+          }
+          h1 { color: #e74c3c; }
+          .back-link {
+            color: #3498db;
+            text-decoration: none;
+            margin-top: 20px;
+            display: inline-block;
+          }
+          .back-link:hover {
+            text-decoration: underline;
+          }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <h1>500 - Server Error</h1>
+          <p>Something went wrong on our end. Please try again later.</p>
+          <a href="/" class="back-link">← Go back to home</a>
+        </div>
+      </body>
+    </html>
+  `);
 });
 
 // Start the server
