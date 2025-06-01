@@ -43,7 +43,7 @@ The server will automatically build and deploy when you push changes to your rep
 ## Features
 
 - Real-time multiplayer game sessions using Socket.IO
-- Music guessing gameplay with Spotify integration
+- Music guessing gameplay
 - Player score tracking and leaderboards
 - Real-time game state synchronization
 - Cross-origin resource sharing (CORS) enabled for Vercel frontend
@@ -54,13 +54,24 @@ The server will automatically build and deploy when you push changes to your rep
 - `GET /api/games`: List active games
 - `POST /api/games`: Create new game
 - `GET /api/games/:id`: Get game details
-- Additional WebSocket events documentation coming soon...
+
+## WebSocket Events
+
+### Client to Server
+- `join-game`: Join an existing game room
+- `submit-answer`: Submit an answer for the current round
+- `start-game`: Start the game (host only)
+
+### Server to Client
+- `player-joined`: New player joined the game
+- `answer-submitted`: Player submitted an answer
+- `game-started`: Game has started
+- `player-left`: Player left the game
+- `error`: Error message
 
 ## Development
 
 - `npm run dev`: Start development server with hot reload
-- `npm run build`: Build TypeScript code
-- `npm test`: Run tests
 - `npm start`: Start production server
 
 ## Tech Stack
@@ -68,5 +79,4 @@ The server will automatically build and deploy when you push changes to your rep
 - Node.js
 - Express
 - Socket.IO
-- MongoDB with Mongoose
-- TypeScript 
+- MongoDB with Mongoose 
