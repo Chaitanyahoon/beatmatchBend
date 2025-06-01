@@ -30,22 +30,36 @@ console.log('Frontend URL:', FRONTEND_URL);
 // Socket.IO Setup with CORS
 const io = new Server(httpServer, {
   cors: {
-    origin: FRONTEND_URL,
+    origin: [FRONTEND_URL, 'https://beatmatch-delta.vercel.app'],
     methods: ['GET', 'POST'],
-    credentials: true,
-    transports: ['websocket', 'polling']
+    credentials: true
   },
-  allowEIO3: true // Allow Engine.IO version 3 for better compatibility
+  allowEIO3: true,
+  transports: ['websocket', 'polling'],
+  pingTimeout: 60000,
+  pingInterval: 25000,
+  upgradeTimeout: 30000,
+  maxHttpBufferSize: 1e8
 });
 
 // Middleware
 app.use(cors({
-  origin: FRONTEND_URL,
-  credentials: true
+  origin: [FRONTEND_URL, 'https://beatmatch-delta.vercel.app'],
+  methods: ['GET', 'POST', 'OPTIONS'],
+  credentials: true,
+  optionsSuccessStatus: 200
 }));
+
 app.use(express.json());
 
+// Add OPTIONS handler for preflight requests
+app.options('*', cors());
+
 // Routes
+app.get('/', (req, res) => {
+  res.send('BeatMatch Game Server is running!');
+});
+
 app.get('/health', (req, res) => {
   res.status(200).json({ 
     status: 'ok',
@@ -258,10 +272,10 @@ io.on('connection', (socket) => {
   });
 });
 
-// Start server
-const PORT = process.env.PORT || 3001;
+// Start the server
+const PORT = process.env.PORT || 3000;
 httpServer.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-  console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
-  console.log(`Accepting requests from: ${FRONTEND_URL}`);
+  console.log(`🎮 Server running on port ${PORT}`);
+  console.log(`🌐 Accepting connections from: ${FRONTEND_URL}`);
+  console.log(`🔧 Environment: ${process.env.NODE_ENV || 'development'}`);
 }); 
