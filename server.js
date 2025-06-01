@@ -11,24 +11,36 @@ const games = new Map();
 // Express App Setup
 const app = express();
 const httpServer = createServer(app);
+
+// Get the frontend URL from environment variable or use default
+const FRONTEND_URL = process.env.FRONTEND_URL || 'https://beatmatch-delta.vercel.app';
+console.log('Frontend URL:', FRONTEND_URL);
+
+// Socket.IO Setup with CORS
 const io = new Server(httpServer, {
   cors: {
-    origin: process.env.FRONTEND_URL || 'https://beatmatch-delta.vercel.app',
+    origin: FRONTEND_URL,
     methods: ['GET', 'POST'],
-    credentials: true
-  }
+    credentials: true,
+    transports: ['websocket', 'polling']
+  },
+  allowEIO3: true // Allow Engine.IO version 3 for better compatibility
 });
 
 // Middleware
 app.use(cors({
-  origin: process.env.FRONTEND_URL || 'https://beatmatch-delta.vercel.app',
+  origin: FRONTEND_URL,
   credentials: true
 }));
 app.use(express.json());
 
 // Routes
 app.get('/health', (req, res) => {
-  res.status(200).json({ status: 'ok' });
+  res.status(200).json({ 
+    status: 'ok',
+    environment: process.env.NODE_ENV,
+    frontendUrl: FRONTEND_URL
+  });
 });
 
 app.get('/api/games', (req, res) => {
@@ -154,8 +166,9 @@ io.on('connection', (socket) => {
 });
 
 // Start server
-const PORT = process.env.PORT || 8000;
+const PORT = process.env.PORT || 3001;
 httpServer.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
-  console.log(`Accepting requests from: ${process.env.FRONTEND_URL || 'https://beatmatch-delta.vercel.app'}`);
+  console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`Accepting requests from: ${FRONTEND_URL}`);
 }); 
