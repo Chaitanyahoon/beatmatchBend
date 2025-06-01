@@ -1,9 +1,9 @@
-import { Express } from 'express';
+import { Express, Request, Response } from 'express';
 import { GameModel } from '../models/Game';
 
 export const setupRoutes = (app: Express) => {
   // List active games
-  app.get('/api/games', async (req, res) => {
+  app.get('/api/games', async (req: Request, res: Response) => {
     try {
       const games = await GameModel.find({ isActive: true });
       res.json(games);
@@ -13,7 +13,7 @@ export const setupRoutes = (app: Express) => {
   });
 
   // Create new game
-  app.post('/api/games', async (req, res) => {
+  app.post('/api/games', async (req: Request, res: Response) => {
     try {
       const { roomId, hostName } = req.body;
       const game = new GameModel({
@@ -33,7 +33,7 @@ export const setupRoutes = (app: Express) => {
   });
 
   // Get specific game
-  app.get('/api/games/:roomId', async (req, res) => {
+  app.get('/api/games/:roomId', async (req: Request, res: Response) => {
     try {
       const game = await GameModel.findOne({ 
         roomId: req.params.roomId,
