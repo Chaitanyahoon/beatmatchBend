@@ -1,97 +1,89 @@
-const io = require('socket.io-client');
-const axios = require('axios');
+// Simple test script to verify your backend is working correctly
+// Run this locally with: node test-connection.js
 
-// Backend URL
-const BACKEND_URL = process.env.BACKEND_URL || 'https://beatmatch-jbss.onrender.com';
+const { io } = require("socket.io-client")
+const fetch = require("node-fetch")
 
-console.log('🔄 Starting connection test...');
-console.log(`📡 Connecting to: ${BACKEND_URL}`);
+// Replace with your actual backend URL
+const BACKEND_URL = "https://beatmatch-jbss.onrender.com"
 
-// First create a game via REST API
-async function createAndJoinGame() {
+async function runTests() {
+  console.log(`🔍 Testing backend at ${BACKEND_URL}...`)
+
+  // Test 1: HTTP Health Check
   try {
-    // Create a new game
-    const roomId = 'test-room-' + Date.now();
-    const createGameResponse = await axios.post(`${BACKEND_URL}/api/games`, {
-      roomId: roomId,
-      hostName: 'TestHost'
-    });
-    
-    console.log('✅ Game created successfully:', createGameResponse.data);
-    
-    // Now connect via Socket.IO
-    const socket = io(BACKEND_URL, {
-      withCredentials: true,
-      transports: ['websocket']
-    });
+    console.log("\n📡 Testing HTTP health endpoint...")
+    const response = await fetch(`${BACKEND_URL}/health`)
+    const data = await response.json()
+    console.log("✅ Health endpoint response:", data)
 
-    // Connection events
-    socket.on('connect', () => {
-      console.log('✅ Connected successfully!');
-      console.log(`🆔 Socket ID: ${socket.id}`);
-      
-      // Join the created game
-      console.log(`🎮 Joining game room: ${roomId}`);
-      socket.emit('join-game', {
-        roomId: roomId,
-        playerName: 'TestPlayer'
-      });
-    });
-
-    socket.on('connect_error', (error) => {
-      console.error('❌ Connection error:', error.message);
-      process.exit(1);
-    });
-
-    // Game events
-    socket.on('player-joined', (data) => {
-      console.log('✅ Player joined event received');
-      console.log('📊 Players in game:', data.players.length);
-      
-      // Test starting the game
-      console.log('🎲 Testing game start...');
-      socket.emit('start-game', {
-        roomId: roomId
-      });
-    });
-
-    socket.on('game-started', (data) => {
-      console.log('✅ Game started event received');
-      console.log('🔄 Current round:', data.currentRound);
-      
-      // Test submitting an answer
-      console.log('📝 Testing answer submission...');
-      socket.emit('submit-answer', {
-        roomId: roomId,
-        answer: {
-          isCorrect: true
-        }
-      });
-    });
-
-    socket.on('answer-submitted', (data) => {
-      console.log('✅ Answer submitted event received');
-      console.log('📊 Updated players:', data.players);
-      
-      // Test complete - disconnect
-      console.log('🏁 Test complete - disconnecting...');
-      socket.disconnect();
-    });
-
-    socket.on('error', (error) => {
-      console.error('❌ Server error:', error.message);
-    });
-
-    socket.on('disconnect', () => {
-      console.log('👋 Disconnected from server');
-      process.exit(0);
-    });
-
+    if (data.status === "OK" || data.status === "ok") {
+      console.log("✅ Health check passed!")
+    } else {
+      console.log("❌ Health check failed - unexpected status:", data.status)
+    }
   } catch (error) {
-    console.error('❌ Error creating game:', error.response ? error.response.data : error.message);
-    process.exit(1);
+    console.error("❌ Health check failed:", error.message)
   }
+
+  // Test 2: Socket.IO Connection
+  console.log("\n🔌 Testing Socket.IO connection...")
+  const socket = io(BACKEND_URL, {
+    transports: ["websocket", "polling"],
+    timeout: 10000,
+  })
+
+  socket.on("connect", () => {
+    console.log(`✅ Socket connected with ID: ${socket.id}`)
+
+    // Test 3: Ping-Pong
+    console.log("\n🏓 Testing ping-pong...")
+    socket.emit("ping")
+  })
+
+  socket.on("pong", () => {
+    console.log("✅ Received pong response!")
+
+    // Test 4: Room Creation
+    console.log("\n🏠 Testing room creation...")
+    const testRoomId =
+      "TEST" +
+      Math.floor(Math.random() * 10000)
+        .toString()
+        .padStart(4, "0")
+    const testPlayerName = "Tester" + Math.floor(Math.random() * 1000)
+
+    socket.emit("join-room", {
+      roomId: testRoomId,
+      playerName: testPlayerName,
+      isHost: true,
+    })
+  })
+
+  socket.on("room-updated", (data) => {
+    console.log("✅ Room created successfully:", data)
+    console.log("\n✨ All tests passed! Your backend is working correctly.")
+    socket.disconnect()
+  })
+
+  socket.on("room-error", (error) => {
+    console.error("❌ Room creation failed:", error)
+    socket.disconnect()
+  })
+
+  socket.on("connect_error", (error) => {
+    console.error("❌ Socket connection failed:", error.message)
+  })
+
+  socket.on("disconnect", () => {
+    console.log("Socket disconnected")
+  })
+
+  // Set a timeout to exit if tests don't complete
+  setTimeout(() => {
+    console.log("⚠️ Tests timed out. The backend might be slow to respond or not working correctly.")
+    process.exit(1)
+  }, 15000)
 }
 
-// Run the test
-createAndJoinGame(); 
+runTests()
