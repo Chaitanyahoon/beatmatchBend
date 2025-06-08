@@ -70,8 +70,16 @@ app.use((req, res, next) => {
   next();
 });
 
+// Basic root route for simple health checks
+app.get('/', (req, res) => {
+  res.status(200).json({
+    status: 'ok',
+    message: 'BeatMatch Game Server is running'
+  });
+});
+
 // Health check endpoint
-app.get('/health', async (req, res) => {
+app.get(['/health', '/healh'], async (req, res) => {
   try {
     const games = await GameStore.getActiveGames();
     res.status(200).json({ 
