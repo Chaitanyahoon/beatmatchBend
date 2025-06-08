@@ -334,8 +334,21 @@ io.on('connection', async (socket) => {
 
 // Error handling middleware
 app.use((err, req, res, next) => {
-  logger.error('Server error:', err);
-  res.status(500).json({ error: 'Internal server error' });
+  logger.error('Server error:', {
+    error: err.message,
+    stack: err.stack,
+    path: req.path,
+    method: req.method,
+    body: req.body,
+    query: req.query
+  });
+  
+  // Don't expose error details in production
+  const response = process.env.NODE_ENV === 'production' 
+    ? { error: 'Internal server error' }
+    : { error: err.message, stack: err.stack };
+    
+  res.status(500).json(response);
 });
 
 // Start server
@@ -343,4 +356,13 @@ httpServer.listen(PORT, () => {
   logger.info(`Server running on port ${PORT}`);
   logger.info(`Environment: ${process.env.NODE_ENV || 'development'}`);
   logger.info(`Frontend URL: ${FRONTEND_URL}`);
+  
+  // Log important environment variables (without sensitive values)
+  logger.info('Environment Configuration:', {
+    NODE_ENV: process.env.NODE_ENV,
+    PORT: process.env.PORT,
+    REDIS_URL: process.env.REDIS_URL ? 'Set' : 'Not Set',
+    REDIS_HOST: process.env.REDIS_HOST ? 'Set' : 'Not Set',
+    FRONTEND_URL: process.env.FRONTEND_URL
+  });
 }); 

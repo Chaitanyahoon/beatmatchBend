@@ -24,12 +24,17 @@ if (process.env.NODE_ENV !== 'production') {
 const getRedisConfig = () => {
   // Check if we're in production (Railway)
   if (process.env.NODE_ENV === 'production') {
+    // Log Redis configuration in production
+    logger.info('Production Redis Config:', {
+      REDIS_URL: process.env.REDIS_URL ? 'Set' : 'Not Set',
+      NODE_ENV: process.env.NODE_ENV
+    });
     // Use Railway's Redis URL in production
     return process.env.REDIS_URL;
   }
 
   // For local development, use Redis Cloud or local Redis
-  return {
+  const config = {
     host: process.env.REDIS_HOST || 'localhost',
     port: process.env.REDIS_PORT || 6379,
     password: process.env.REDIS_PASSWORD,
@@ -37,8 +42,18 @@ const getRedisConfig = () => {
       const delay = Math.min(times * 50, 2000);
       return delay;
     },
-    maxRetriesPerRequest: 5
+    maxRetriesPerRequest: 5,
+    enableReadyCheck: true,
+    maxReconnectAttempts: 10
   };
+
+  logger.info('Development Redis Config:', {
+    host: config.host,
+    port: config.port,
+    password: config.password ? 'Set' : 'Not Set'
+  });
+
+  return config;
 };
 
 // Create Redis client
@@ -51,16 +66,37 @@ redisClient.on('connect', () => {
 });
 
 redisClient.on('error', (err) => {
-  logger.error('Redis Client Error', err);
+  logger.error('Redis Client Error', {
+    error: err.message,
+    stack: err.stack,
+    code: err.code
+  });
 });
 
 redisClient.on('ready', () => {
   logger.info('Redis Client Ready');
 });
 
-redisClient.on('reconnecting', () => {
-  logger.info('Redis Client Reconnecting');
+redisClient.on('reconnecting', (delay) => {
+  logger.info('Redis Client Reconnecting', { delay });
 });
+
+redisClient.on('end', () => {
+  logger.error('Redis Client Connection Ended');
+});
+
+// Test Redis connection
+(async () => {
+  try {
+    await redisClient.ping();
+    logger.info('Redis PING successful');
+  } catch (error) {
+    logger.error('Redis PING failed', {
+      error: error.message,
+      stack: error.stack
+    });
+  }
+})();
 
 // Game-related Redis operations
 const GameStore = {
