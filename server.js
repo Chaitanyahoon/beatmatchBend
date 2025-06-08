@@ -3,21 +3,11 @@ const express = require('express');
 const { createServer } = require('http');
 const { Server } = require('socket.io');
 const cors = require('cors');
+const rateLimit = require('express-rate-limit');
 require('dotenv').config();
 
-// In-memory game storage
-const games = new Map();
-
-// Game Configuration
-const GAME_CONFIG = {
-  TOTAL_ROUNDS: 10,
-  SCORING: {
-    BASE_POINTS: 100,
-    TIME_BONUS_MAX: 50,
-    STREAK_BONUS: 25,
-    ROUND_COMPLETION_BONUS: 50
-  }
-};
+const { GameSession, GAME_CONSTANTS } = require('./src/game/gameLogic');
+const { GameStore, logger } = require('./src/config/redis');
 
 // Express App Setup
 const app = express();
@@ -28,6 +18,12 @@ const FRONTEND_URL = process.env.FRONTEND_URL || 'https://beatmatch-delta.vercel
 const PORT = process.env.PORT || 3001;
 console.log('Frontend URL:', FRONTEND_URL);
 console.log('Server Port:', PORT);
+
+// Rate limiting
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100 // limit each IP to 100 requests per windowMs
+});
 
 // Socket.IO Setup with CORS
 const io = new Server(httpServer, {
@@ -58,6 +54,7 @@ app.use(cors({
 }));
 
 app.use(express.json());
+app.use(limiter);
 
 // Add headers to allow WebSocket upgrade
 app.use((req, res, next) => {
@@ -69,15 +66,21 @@ app.use((req, res, next) => {
 });
 
 // Health check endpoint
-app.get('/health', (req, res) => {
-  res.status(200).json({ 
-    status: 'ok',
-    timestamp: new Date().toISOString(),
-    environment: process.env.NODE_ENV,
-    frontendUrl: FRONTEND_URL,
-    activeGames: games.size,
-    connectedClients: io.engine.clientsCount
-  });
+app.get('/health', async (req, res) => {
+  try {
+    const games = await GameStore.getActiveGames();
+    res.status(200).json({ 
+      status: 'ok',
+      timestamp: new Date().toISOString(),
+      environment: process.env.NODE_ENV,
+      frontendUrl: FRONTEND_URL,
+      activeGames: games.length,
+      connectedClients: io.engine.clientsCount
+    });
+  } catch (error) {
+    logger.error('Health check error:', error);
+    res.status(500).json({ status: 'error', message: error.message });
+  }
 });
 
 // Routes
@@ -171,39 +174,24 @@ app.get('/api/games', (req, res) => {
   }
 });
 
-app.post('/api/games', (req, res) => {
+app.post('/api/games', async (req, res) => {
   try {
     const { roomId, hostName } = req.body;
     if (!roomId || !hostName) {
       return res.status(400).json({ error: 'Missing required fields' });
     }
 
-    if (games.has(roomId)) {
+    const existingGame = await GameStore.getGame(roomId);
+    if (existingGame) {
       return res.status(400).json({ error: 'Room ID already exists' });
     }
 
-    const game = {
-      roomId,
-      players: [{
-        id: 'host',
-        name: hostName,
-        score: 0,
-        correctAnswers: 0,
-        streak: 0,
-        lastAnswerTime: null
-      }],
-      currentRound: 0,
-      totalRounds: GAME_CONFIG.TOTAL_ROUNDS,
-      isActive: true,
-      startedAt: new Date(),
-      endedAt: null,
-      roundStartTime: null
-    };
-
-    games.set(roomId, game);
+    const game = new GameSession(roomId, hostName);
+    await GameStore.saveGame(roomId, game);
+    
     res.status(201).json(game);
   } catch (error) {
-    console.error('Error creating game:', error);
+    logger.error('Error creating game:', error);
     res.status(500).json({ error: 'Failed to create game' });
   }
 });
@@ -222,80 +210,21 @@ app.get('/api/games/:roomId', (req, res) => {
 });
 
 // Socket.IO connection handling
-io.on('connection', (socket) => {
-  console.log('🟢 New client connected:', socket.id);
-  console.log(`📊 Total connected clients: ${io.engine.clientsCount}`);
-
-  // Handle transport change
-  socket.conn.on('upgrade', (transport) => {
-    console.log('🔄 Connection upgraded to:', transport.name);
-  });
-
-  // Handle error
-  socket.on('error', (error) => {
-    console.error('❌ Socket error:', error);
-  });
-
-  // Handle disconnection
-  socket.on('disconnect', (reason) => {
-    console.log(`🔴 Client disconnected (${reason}):`, socket.id);
-    try {
-      for (const [roomId, game] of games.entries()) {
-        const playerIndex = game.players.findIndex(p => p.id === socket.id);
-        if (playerIndex !== -1) {
-          const player = game.players[playerIndex];
-          console.log(`👋 Player left game - Room: ${roomId}, Player: ${player.name}`);
-          game.players = game.players.filter(p => p.id !== socket.id);
-          
-          if (game.players.length === 0) {
-            game.isActive = false;
-            game.endedAt = new Date();
-            console.log(`🏁 Game ended - Room: ${roomId} (no players remaining)`);
-            // Clean up inactive games after 1 hour
-            setTimeout(() => {
-              if (!game.isActive) {
-                games.delete(roomId);
-                console.log(`🧹 Cleaned up inactive game: ${roomId}`);
-              }
-            }, 3600000);
-          }
-          
-          io.to(roomId).emit('player-left', { 
-            players: game.players,
-            gameStatus: game.isActive ? 'active' : 'ended'
-          });
-          break;
-        }
-      }
-    } catch (error) {
-      console.error('❌ Disconnect handling error:', error);
-    }
-  });
+io.on('connection', async (socket) => {
+  logger.info('New client connected:', socket.id);
 
   socket.on('join-game', async (data) => {
     try {
-      console.log(`🎮 Player joining game - Room: ${data.roomId}, Player: ${data.playerName}`);
-      const game = games.get(data.roomId);
+      const game = await GameStore.getGame(data.roomId);
       
       if (!game || !game.isActive) {
         socket.emit('error', { message: 'Game not found or inactive' });
         return;
       }
 
-      if (game.players.length >= 4) {
-        socket.emit('error', { message: 'Game room is full' });
-        return;
-      }
-
-      game.players.push({
-        id: socket.id,
-        name: data.playerName,
-        score: 0,
-        correctAnswers: 0,
-        streak: 0,
-        lastAnswerTime: null
-      });
-
+      game.addPlayer(socket.id, data.playerName);
+      await GameStore.saveGame(data.roomId, game);
+      
       await socket.join(data.roomId);
       io.to(data.roomId).emit('player-joined', {
         players: game.players,
@@ -306,14 +235,14 @@ io.on('connection', (socket) => {
         }
       });
     } catch (error) {
-      console.error('❌ Error joining game:', error);
+      logger.error('Error joining game:', error);
       socket.emit('error', { message: 'Failed to join game' });
     }
   });
 
-  socket.on('start-game', (data) => {
+  socket.on('start-game', async (data) => {
     try {
-      const game = games.get(data.roomId);
+      const game = await GameStore.getGame(data.roomId);
       if (!game || !game.isActive) {
         socket.emit('error', { message: 'Game not found' });
         return;
@@ -324,111 +253,94 @@ io.on('connection', (socket) => {
         return;
       }
 
-      game.currentRound = 1;
-      game.roundStartTime = Date.now();
+      const roundData = await game.startNewRound();
+      await GameStore.saveGame(data.roomId, game);
       
-      io.to(data.roomId).emit('game-started', {
-        currentRound: game.currentRound,
-        players: game.players,
-        startTime: game.roundStartTime
-      });
+      io.to(data.roomId).emit('round-started', roundData);
     } catch (error) {
-      console.error('❌ Error starting game:', error);
+      logger.error('Error starting game:', error);
       socket.emit('error', { message: 'Failed to start game' });
     }
   });
 
-  socket.on('submit-answer', (data) => {
+  socket.on('submit-answer', async (data) => {
     try {
-      const game = games.get(data.roomId);
+      const game = await GameStore.getGame(data.roomId);
       if (!game || !game.isActive) {
         socket.emit('error', { message: 'Game not found' });
         return;
       }
 
-      const player = game.players.find(p => p.id === socket.id);
-      if (!player) {
-        socket.emit('error', { message: 'Player not found' });
+      const result = game.submitAnswer(socket.id, data.answer);
+      if (!result) {
+        socket.emit('error', { message: 'Invalid answer submission' });
         return;
       }
 
-      const answerTime = Date.now() - game.roundStartTime;
-      const isCorrect = data.answer.isCorrect;
+      io.to(data.roomId).emit('answer-submitted', result);
 
-      // Update player score
-      if (isCorrect) {
-        const timeBonus = Math.max(0, GAME_CONFIG.SCORING.TIME_BONUS_MAX - Math.floor(answerTime / 1000));
-        const streakBonus = player.streak * GAME_CONFIG.SCORING.STREAK_BONUS;
-        player.score += GAME_CONFIG.SCORING.BASE_POINTS + timeBonus + streakBonus;
-        player.correctAnswers++;
-        player.streak++;
-      } else {
-        player.streak = 0;
-      }
+      if (game.isRoundComplete()) {
+        const roundSummary = game.getRoundSummary();
+        io.to(data.roomId).emit('round-ended', roundSummary);
 
-      player.lastAnswerTime = Date.now();
-
-      // Check if all players have answered
-      const allAnswered = game.players.every(p => p.lastAnswerTime > game.roundStartTime);
-      
-      if (allAnswered) {
-        game.currentRound++;
-        game.roundStartTime = Date.now();
-        
-        if (game.currentRound > game.totalRounds) {
-          const winner = game.players.reduce((prev, current) => 
-            (prev.score > current.score) ? prev : current
-          );
-          
-          game.isActive = false;
-          game.endedAt = new Date();
-          
-          io.to(data.roomId).emit('game-ended', {
-            winner,
-            players: game.players,
-            finalScores: game.players.map(p => ({
-              name: p.name,
-              score: p.score,
-              correctAnswers: p.correctAnswers
-            }))
-          });
+        // Start next round or end game
+        if (game.currentRound >= game.totalRounds) {
+          const gameResults = game.endGame();
+          io.to(data.roomId).emit('game-ended', gameResults);
           
           // Clean up the game after 1 hour
-          setTimeout(() => {
-            games.delete(data.roomId);
-            console.log(`🧹 Cleaned up finished game: ${data.roomId}`);
+          setTimeout(async () => {
+            await GameStore.deleteGame(data.roomId);
+            logger.info(`Cleaned up finished game: ${data.roomId}`);
           }, 3600000);
         } else {
-          io.to(data.roomId).emit('round-ended', {
-            nextRound: game.currentRound,
+          const nextRoundData = await game.startNewRound();
+          io.to(data.roomId).emit('round-started', nextRoundData);
+        }
+      }
+
+      await GameStore.saveGame(data.roomId, game);
+    } catch (error) {
+      logger.error('Error submitting answer:', error);
+      socket.emit('error', { message: 'Failed to submit answer' });
+    }
+  });
+
+  socket.on('disconnect', async () => {
+    try {
+      logger.info('Client disconnected:', socket.id);
+      
+      // Find and update any games this player was in
+      const games = await GameStore.getAllGames();
+      for (const game of games) {
+        if (game.removePlayer(socket.id)) {
+          // If no players left, clean up the game
+          await GameStore.deleteGame(game.roomId);
+          logger.info(`Game ended due to all players leaving: ${game.roomId}`);
+        } else {
+          // Update the game with the player removed
+          await GameStore.saveGame(game.roomId, game);
+          io.to(game.roomId).emit('player-left', {
             players: game.players,
-            roundStartTime: game.roundStartTime
+            gameStatus: game.isActive ? 'active' : 'ended'
           });
         }
-      } else {
-        io.to(data.roomId).emit('answer-submitted', {
-          playerId: socket.id,
-          playerName: player.name,
-          isCorrect,
-          score: player.score
-        });
       }
     } catch (error) {
-      console.error('❌ Error submitting answer:', error);
-      socket.emit('error', { message: 'Failed to submit answer' });
+      logger.error('Error handling disconnect:', error);
     }
   });
 });
 
 // Error handling middleware
 app.use((err, req, res, next) => {
-  console.error('❌ Server error:', err);
+  logger.error('Server error:', err);
   res.status(500).json({ error: 'Internal server error' });
 });
 
 // Start server
 httpServer.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
-  console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
-  console.log(`🔗 Frontend URL: ${FRONTEND_URL}`);
+  logger.info(`Server running on port ${PORT}`);
+  logger.info(`Environment: ${process.env.NODE_ENV || 'development'}`);
+  logger.info(`Frontend URL: ${FRONTEND_URL}`);
 }); 
