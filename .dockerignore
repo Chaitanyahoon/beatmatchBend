@@ -1,0 +1,17 @@
+node_modules
+npm-debug.log
+.env
+.env.local
+.git
+.gitignore
+*.log
+coverage
+.vscode
+.idea
+*.md
+test
+tests
+__tests__
+*.test.js
+*.spec.js
+.DS_Store 
