@@ -81,18 +81,35 @@ app.get('/', (req, res) => {
 // Health check endpoint
 app.get(['/health', '/healh'], async (req, res) => {
   try {
-    const games = await GameStore.getActiveGames();
+    // Check Redis connection
+    const redisConnected = await GameStore.isRedisConnected();
+    
+    // Get active games only if Redis is connected
+    const games = redisConnected ? await GameStore.getActiveGames() : [];
+    
     res.status(200).json({ 
       status: 'ok',
       timestamp: new Date().toISOString(),
       environment: process.env.NODE_ENV,
       frontendUrl: FRONTEND_URL,
-      activeGames: games.length,
+      redis: {
+        connected: redisConnected,
+        activeGames: games.length
+      },
       connectedClients: io.engine.clientsCount
     });
   } catch (error) {
     logger.error('Health check error:', error);
-    res.status(500).json({ status: 'error', message: error.message });
+    // Still return 200 for the health check, but include error details
+    res.status(200).json({ 
+      status: 'ok',
+      timestamp: new Date().toISOString(),
+      environment: process.env.NODE_ENV,
+      redis: {
+        connected: false,
+        error: error.message
+      }
+    });
   }
 });
 

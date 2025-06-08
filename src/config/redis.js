@@ -29,22 +29,45 @@ const getRedisConfig = () => {
       REDIS_URL: process.env.REDIS_URL ? 'Set' : 'Not Set',
       NODE_ENV: process.env.NODE_ENV
     });
-    // Use Railway's Redis URL in production
-    return process.env.REDIS_URL;
+
+    return {
+      url: process.env.REDIS_URL,
+      maxRetriesPerRequest: null,
+      retryStrategy(times) {
+        const delay = Math.min(times * 100, 3000);
+        logger.info(`Retrying Redis connection, attempt ${times}, delay: ${delay}ms`);
+        return delay;
+      },
+      reconnectOnError(err) {
+        logger.error('Redis reconnect on error:', err);
+        const targetError = 'READONLY';
+        if (err.message.includes(targetError)) {
+          return true;
+        }
+        return false;
+      },
+      enableOfflineQueue: true,
+      connectTimeout: 20000,
+      disconnectTimeout: 20000,
+      commandTimeout: 10000,
+      lazyConnect: true
+    };
   }
 
-  // For local development, use Redis Cloud or local Redis
+  // For local development
   const config = {
     host: process.env.REDIS_HOST || 'localhost',
     port: process.env.REDIS_PORT || 6379,
     password: process.env.REDIS_PASSWORD,
-    retryStrategy: (times) => {
-      const delay = Math.min(times * 50, 2000);
+    maxRetriesPerRequest: null,
+    retryStrategy(times) {
+      const delay = Math.min(times * 100, 3000);
+      logger.info(`Retrying Redis connection, attempt ${times}, delay: ${delay}ms`);
       return delay;
     },
-    maxRetriesPerRequest: 5,
-    enableReadyCheck: true,
-    maxReconnectAttempts: 10
+    enableOfflineQueue: true,
+    connectTimeout: 20000,
+    lazyConnect: true
   };
 
   logger.info('Development Redis Config:', {
@@ -85,20 +108,7 @@ redisClient.on('end', () => {
   logger.error('Redis Client Connection Ended');
 });
 
-// Test Redis connection
-(async () => {
-  try {
-    await redisClient.ping();
-    logger.info('Redis PING successful');
-  } catch (error) {
-    logger.error('Redis PING failed', {
-      error: error.message,
-      stack: error.stack
-    });
-  }
-})();
-
-// Game-related Redis operations
+// Modified GameStore to handle Redis connection issues
 const GameStore = {
   // Key prefixes
   keys: {
@@ -106,28 +116,47 @@ const GameStore = {
     activeGames: 'active_games'
   },
 
+  async isRedisConnected() {
+    try {
+      await redisClient.ping();
+      return true;
+    } catch (error) {
+      logger.error('Redis connection check failed:', error);
+      return false;
+    }
+  },
+
   // Store a game session (expires in 3 hours)
   async saveGame(roomId, gameData) {
     try {
+      if (!await this.isRedisConnected()) {
+        logger.warn('Redis not connected, skipping save operation');
+        return;
+      }
       const key = this.keys.game(roomId);
       await redisClient.setex(key, 10800, JSON.stringify(gameData));
       await redisClient.sadd(this.keys.activeGames, roomId);
       logger.info(`Game saved: ${roomId}`);
     } catch (error) {
       logger.error('Error saving game:', error);
-      throw error;
+      // Don't throw error, return null instead
+      return null;
     }
   },
 
   // Get a game session
   async getGame(roomId) {
     try {
+      if (!await this.isRedisConnected()) {
+        logger.warn('Redis not connected, returning null');
+        return null;
+      }
       const key = this.keys.game(roomId);
       const gameData = await redisClient.get(key);
       return gameData ? JSON.parse(gameData) : null;
     } catch (error) {
       logger.error('Error getting game:', error);
-      throw error;
+      return null;
     }
   },
 
@@ -147,6 +176,10 @@ const GameStore = {
   // Get all active games
   async getActiveGames() {
     try {
+      if (!await this.isRedisConnected()) {
+        logger.warn('Redis not connected, returning empty array');
+        return [];
+      }
       const roomIds = await redisClient.smembers(this.keys.activeGames);
       const games = await Promise.all(
         roomIds.map(async (roomId) => {
@@ -157,7 +190,7 @@ const GameStore = {
       return games.filter(game => game !== null);
     } catch (error) {
       logger.error('Error getting active games:', error);
-      throw error;
+      return [];
     }
   },
 
