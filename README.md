@@ -1,29 +1,43 @@
 # BeatMatch Backend
 
-A real-time multiplayer music guessing game backend built with JavaScript/TypeScript, Socket.IO, and Express.
+A real-time multiplayer music guessing game backend built with Node.js, Socket.IO, and Redis.
 
 ## Features
 
-- Real-time multiplayer game rooms
+- Real-time multiplayer gameplay
+- Spotify integration for music tracks
+- Redis-based game state management
+- Score tracking and leaderboards
 - Player session management
-- Game state synchronization
-- Score tracking with time bonuses
-- Player streaks
-- Automatic cleanup of inactive sessions
-- Type-safe Socket.IO events (TypeScript version)
-- Comprehensive error handling and logging
+- Rate limiting and error handling
 
 ## Prerequisites
 
-- Node.js >= 18.0.0
-- npm
+- Node.js >= 14.0.0
+- Redis (for local development)
+- Spotify Developer Account
+
+## Environment Variables
+
+```env
+# Required in production (Railway will provide these)
+REDIS_URL=your-redis-url
+NODE_ENV=production
+
+# Spotify API credentials
+SPOTIFY_CLIENT_ID=your-spotify-client-id
+SPOTIFY_CLIENT_SECRET=your-spotify-client-secret
+
+# Frontend URL
+FRONTEND_URL=your-frontend-url
+```
 
 ## Installation
 
 1. Clone the repository:
 ```bash
-git clone <repository-url>
-cd beatmatch-bend-backend
+git clone https://github.com/your-username/beatmatch-backend.git
+cd beatmatch-backend
 ```
 
 2. Install dependencies:
@@ -31,135 +45,67 @@ cd beatmatch-bend-backend
 npm install
 ```
 
-3. Create a `.env` file in the root directory:
-```env
-PORT=3001
-NODE_ENV=development
-FRONTEND_URL=http://localhost:3000
-```
+3. Create a `.env` file with your configuration.
 
 ## Development
 
-The project supports both JavaScript and TypeScript development environments.
-
-### JavaScript Development (Production Version)
+Run the development server:
 ```bash
 npm run dev
-# or
-npm run dev:js
 ```
 
-### TypeScript Development (Type-Safe Version)
-```bash
-npm run dev:ts
-```
+## Production
 
-The server will be running at `http://localhost:3001`.
+For production deployment on Railway:
 
-## Testing
-
-### Unit Tests
-```bash
-npm test
-```
-
-### Integration Tests
-```bash
-# Test game functionality
-npm run test:js
-
-# Test multiplayer features
-npm run test:multi
-
-# Test connection handling
-npm run test:connection
-```
-
-## Project Structure
-
-```
-├── server.js                # Main JavaScript server file (Production)
-├── quick-game-test.js       # Game testing utility
-├── test-multiplayer.js      # Multiplayer testing utility
-├── test-connection.js       # Connection testing utility
-├── src/                     # TypeScript source files
-│   ├── index.ts            # TypeScript server implementation
-│   ├── types.ts            # Type definitions
-│   ├── services/
-│   │   └── GameManager.ts  # Game logic and state management
-│   └── utils/
-│       ├── logger.ts       # Winston logger configuration
-│       └── songUtils.ts    # Song-related utilities
-```
-
-## Deployment
-
-The project is configured for deployment on Render.com using the JavaScript version.
-
-1. Make sure the following environment variables are set:
-   - `PORT`: Server port (default: 3001)
-   - `NODE_ENV`: Set to 'production' for deployment
-   - `FRONTEND_URL`: Your frontend application URL
-
-2. The `Procfile` and `server.js` are used for production deployment.
+1. Push code to GitHub
+2. Create new project on Railway
+3. Connect to GitHub repository
+4. Add environment variables
+5. Add Redis plugin
 
 ## API Endpoints
 
-### POST /api/games
-Creates a new game room.
+- `GET /health` - Health check endpoint
+- `POST /api/games` - Create a new game
+- `GET /api/games/:roomId` - Get game details
+- `GET /api/games` - List active games
 
-Request body:
-```json
-{
-  "roomId": "string",
-  "hostName": "string"
-}
-```
+## WebSocket Events
 
-Response:
-```json
-{
-  "roomId": "string",
-  "hostId": "string"
-}
-```
+### Client -> Server
+- `join-game` - Join a game room
+- `start-game` - Start the game
+- `submit-answer` - Submit an answer
 
-## Socket.IO Events
-
-### Client to Server
-- `join-game`: Join a game room
-- `start-game`: Start the game (host only)
-- `submit-answer`: Submit an answer for the current round
-- `leave-game`: Leave the current game
-
-### Server to Client
-- `player-joined`: New player joined the room
-- `game-started`: Game has started
-- `answer-submitted`: Player submitted an answer
-- `round-ended`: Current round has ended
-- `game-ended`: Game has finished
-- `error`: Error occurred
+### Server -> Client
+- `player-joined` - New player joined
+- `game-started` - Game has started
+- `round-started` - New round started
+- `answer-submitted` - Player submitted an answer
+- `round-ended` - Round has ended
+- `game-ended` - Game has ended
 
 ## Game Flow
 
-1. Host creates a game room via REST API
-2. Players join the room using Socket.IO
-3. Host starts the game when ready
-4. Each round:
-   - Server sends song question
-   - Players submit answers
-   - Scores are calculated
-   - Next round starts
-5. Game ends after final round
-6. Winner is announced
-7. Room is cleaned up
+1. Players join a room (up to 4 players)
+2. Host starts the game
+3. Each round:
+   - Random song is selected
+   - Players guess the song
+   - Points awarded based on:
+     - Base points (100)
+     - Time bonus (up to 50)
+     - Streak bonus (25 per streak)
+4. After 10 rounds, final scores displayed
 
-## Error Handling
+## Contributing
 
-- Comprehensive error handling for all API endpoints
-- Socket.IO error events for client notification
-- Winston logger for error tracking
-- Automatic cleanup of inactive sessions
+1. Fork the repository
+2. Create your feature branch
+3. Commit your changes
+4. Push to the branch
+5. Create a Pull Request
 
 ## License
 
