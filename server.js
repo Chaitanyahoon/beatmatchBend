@@ -13,16 +13,21 @@ const { GameStore, logger } = require('./src/config/redis');
 const app = express();
 const httpServer = createServer(app);
 
+// Trust proxy - required for Railway deployment
+app.set('trust proxy', 1);
+
 // Get the frontend URL from environment variable or use default
 const FRONTEND_URL = process.env.FRONTEND_URL || 'https://beatmatch-delta.vercel.app';
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT || 8080;
 console.log('Frontend URL:', FRONTEND_URL);
 console.log('Server Port:', PORT);
 
 // Rate limiting
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100 // limit each IP to 100 requests per windowMs
+  max: 100, // limit each IP to 100 requests per windowMs
+  standardHeaders: true,
+  legacyHeaders: false
 });
 
 // Socket.IO Setup with CORS
